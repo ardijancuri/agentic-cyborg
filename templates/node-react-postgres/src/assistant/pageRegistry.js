@@ -12,7 +12,7 @@ export const createProjectPageRegistry = () => [
     label: 'Products',
     route: '/products',
     description: 'Product catalog and product details.',
-    actionTypes: ['review_product', 'update_product_price', 'bulk_update_product_prices'],
+    actionTypes: ['review_product', 'update_product_price', 'bulk_update_product_prices', 'bulk_update_product_prices_by_category'],
     keywords: ['product', 'products', 'catalog', 'sku'],
   },
   {
@@ -20,7 +20,7 @@ export const createProjectPageRegistry = () => [
     label: 'Inventory',
     route: '/inventory',
     description: 'Stock levels and inventory operations.',
-    actionTypes: ['review_stock', 'review_inventory', 'update_product_price', 'bulk_update_product_prices'],
+    actionTypes: ['review_stock', 'review_inventory', 'update_product_price', 'bulk_update_product_prices', 'bulk_update_product_prices_by_category'],
     keywords: ['stock', 'inventory', 'low stock', 'warehouse'],
   },
   {

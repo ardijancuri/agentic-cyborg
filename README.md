@@ -216,11 +216,25 @@ const writeActionRegistry = createWriteActionRegistry({
         // in a transaction, then audit the full before/after result.
       },
     },
+    {
+      type: 'bulk_update_product_prices_by_category',
+      handlerName: 'bulk_update_product_prices_by_category',
+      description: 'Update approved price fields for all products in one resolved category after full_admin approval.',
+      requiredRoles: ['full_admin'],
+      payloadSchema: {
+        type: 'object',
+        required: ['categoryName', 'priceField', 'operation', 'currency', 'maxItems', 'reason'],
+      },
+      apply: async ({ action, user, requestContext }) => {
+        // Resolve the category through approved app APIs, bound the item count,
+        // validate the pricing operation, update in a transaction, then audit every changed row.
+      },
+    },
   ],
 });
 ```
 
-The assistant may propose `update_product_price` or `bulk_update_product_prices`, but they must stay `requiresUserReview: true`. The backend stores them as `draft`; only `POST /api/assistant/draft-actions/:id/apply` can mark them `applied`.
+The assistant may propose `update_product_price`, `bulk_update_product_prices`, or `bulk_update_product_prices_by_category`, but they must stay `requiresUserReview: true`. The backend stores them as `draft`; only `POST /api/assistant/draft-actions/:id/apply` can mark them `applied`.
 
 ## Environment Variables
 

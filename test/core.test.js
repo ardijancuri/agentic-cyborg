@@ -43,7 +43,7 @@ const TEST_PAGE_REGISTRY = [
     id: 'wc_products',
     label: 'WooCommerce Products',
     route: '/wp-admin/edit.php?post_type=product',
-    actionTypes: ['update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices'],
+    actionTypes: ['update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices', 'bulk_update_woocommerce_category_product_prices'],
     keywords: ['product', 'price'],
   },
 ];
@@ -225,6 +225,24 @@ test('bulk product price draft actions are review-only and route-clamped', () =>
       },
       confidence: 0.8,
     },
+    {
+      type: 'bulk_update_woocommerce_category_product_prices',
+      title: 'Clear category sale prices',
+      reason: 'The owner requested a reviewed sale price removal for one category.',
+      targetRoute: '/wrong-category-route',
+      payload: {
+        categoryName: 'Tekstil',
+        priceField: 'sale_price',
+        operation: 'clear_sale_price',
+        currency: 'EUR',
+        includeVariations: true,
+        maxItems: 100,
+        reason: 'Owner requested sale price removal',
+      },
+      confidence: 0.86,
+      requiresUserReview: false,
+      status: 'applied',
+    },
   ], {
     pageRegistry: [
       ...TEST_PAGE_REGISTRY,
@@ -239,7 +257,7 @@ test('bulk product price draft actions are review-only and route-clamped', () =>
     fallbackRoute: '/dashboard',
   });
 
-  assert.equal(actions.length, 2);
+  assert.equal(actions.length, 3);
   assert.equal(actions[0].type, 'bulk_update_woocommerce_product_prices');
   assert.equal(actions[0].targetRoute, '/wp-admin/edit.php?post_type=product');
   assert.equal(actions[0].requiresUserReview, true);
@@ -247,6 +265,10 @@ test('bulk product price draft actions are review-only and route-clamped', () =>
   assert.equal(actions[0].payload.items.length, 2);
   assert.equal(actions[1].type, 'bulk_update_product_prices');
   assert.equal(actions[1].targetRoute, '/stock');
+  assert.equal(actions[2].type, 'bulk_update_woocommerce_category_product_prices');
+  assert.equal(actions[2].targetRoute, '/wp-admin/edit.php?post_type=product');
+  assert.equal(actions[2].status, 'draft');
+  assert.equal(actions[2].requiresUserReview, true);
 });
 
 test('read-only tool registry exposes only named tools and passes context', async () => {
@@ -663,8 +685,11 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
 
     async generate(input) {
       assert.equal(this.toolRegistry.hasTool('find_products'), true);
+      assert.equal(this.toolRegistry.hasTool('get_product_categories'), true);
+      assert.equal(this.toolRegistry.hasTool('find_products_by_category'), true);
       assert.equal(input.writeActions[0].type, 'update_woocommerce_product_price');
       assert.equal(input.writeActions[1].type, 'bulk_update_woocommerce_product_prices');
+      assert.equal(input.writeActions[2].type, 'bulk_update_woocommerce_category_product_prices');
       assert.equal(input.pageRegistry[0].route, '/wp-admin/edit.php?post_type=product');
       return {
         answer: 'Done',
@@ -699,6 +724,18 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
         description: 'Find products',
         parameters: { type: 'object', properties: {}, additionalProperties: false },
       },
+      {
+        type: 'function',
+        name: 'get_product_categories',
+        description: 'Find categories',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      },
+      {
+        type: 'function',
+        name: 'find_products_by_category',
+        description: 'Find products by category',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      },
     ],
     callback: {
       toolsRunUrl: 'https://store.example/wp-json/oninova-assistant/v1/tools/run',
@@ -707,6 +744,7 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
     writeActions: [
       { type: 'update_woocommerce_product_price' },
       { type: 'bulk_update_woocommerce_product_prices' },
+      { type: 'bulk_update_woocommerce_category_product_prices' },
     ],
     pageRegistry: [{ id: 'products', route: '/wp-admin/edit.php?post_type=product' }],
   });

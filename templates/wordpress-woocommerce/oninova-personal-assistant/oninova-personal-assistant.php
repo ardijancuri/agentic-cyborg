@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oninova Personal Assistant for WooCommerce
  * Description: Adds an approved AI assistant drawer for WooCommerce store operations.
- * Version: 0.1.2
+ * Version: 0.1.3
  * Author: Oninova
  * Requires Plugins: woocommerce
  */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('PSA_WC_ASSISTANT_VERSION', '0.1.2');
+define('PSA_WC_ASSISTANT_VERSION', '0.1.3');
 define('PSA_WC_ASSISTANT_REST_NAMESPACE', 'oninova-assistant/v1');
 define('PSA_WC_OPTION_MODE', 'psa_wc_assistant_mode');
 define('PSA_WC_OPTION_OPENAI_API_KEY', 'psa_wc_assistant_openai_api_key');
@@ -429,6 +429,35 @@ function psa_wc_assistant_tool_definitions() {
         ),
         array(
             'type' => 'function',
+            'name' => 'get_product_categories',
+            'description' => 'Read-only WooCommerce product category lookup by name/slug before category bulk price draft actions.',
+            'parameters' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'search' => array('type' => 'string'),
+                    'limit' => array('type' => 'integer', 'minimum' => 1, 'maximum' => 50),
+                ),
+                'additionalProperties' => false,
+            ),
+        ),
+        array(
+            'type' => 'function',
+            'name' => 'find_products_by_category',
+            'description' => 'Read-only WooCommerce product lookup by product category, including current regular and sale prices.',
+            'parameters' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'categoryId' => array('type' => 'integer'),
+                    'categorySlug' => array('type' => 'string'),
+                    'categoryName' => array('type' => 'string'),
+                    'includeVariations' => array('type' => 'boolean'),
+                    'limit' => array('type' => 'integer', 'minimum' => 1, 'maximum' => 100),
+                ),
+                'additionalProperties' => false,
+            ),
+        ),
+        array(
+            'type' => 'function',
             'name' => 'get_low_stock_products',
             'description' => 'Read-only WooCommerce products with low managed stock.',
             'parameters' => array(
@@ -499,7 +528,7 @@ function psa_wc_assistant_page_registry() {
             'label' => 'Products',
             'route' => psa_wc_admin_path('edit.php?post_type=product'),
             'description' => 'WooCommerce products, variations, prices, and stock.',
-            'actionTypes' => array('review_product', 'review_stock', 'update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices'),
+            'actionTypes' => array('review_product', 'review_stock', 'update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices', 'bulk_update_woocommerce_category_product_prices'),
             'keywords' => array('product', 'products', 'stock', 'inventory', 'price'),
         ),
         array(
@@ -589,6 +618,31 @@ function psa_wc_assistant_write_actions() {
                             'additionalProperties' => false,
                         ),
                     ),
+                ),
+                'additionalProperties' => false,
+            ),
+        ),
+        array(
+            'type' => 'bulk_update_woocommerce_category_product_prices',
+            'handlerName' => 'bulk_update_woocommerce_category_product_prices',
+            'title' => 'Bulk update WooCommerce category product prices',
+            'description' => 'Update regular_price or sale_price for all simple products/variations in a WooCommerce product category after WooCommerce manager approval.',
+            'requiredRoles' => array('manage_woocommerce'),
+            'payloadSchema' => array(
+                'type' => 'object',
+                'required' => array('priceField', 'operation', 'currency', 'reason'),
+                'properties' => array(
+                    'categoryId' => array('type' => 'integer'),
+                    'categorySlug' => array('type' => 'string'),
+                    'categoryName' => array('type' => 'string'),
+                    'priceField' => array('type' => 'string', 'enum' => array('regular_price', 'sale_price')),
+                    'operation' => array('type' => 'string', 'enum' => array('set_fixed', 'decrease_percent', 'increase_percent', 'set_percent_of_regular_price', 'clear_sale_price')),
+                    'newPrice' => array('type' => 'string'),
+                    'percent' => array('type' => 'number'),
+                    'includeVariations' => array('type' => 'boolean'),
+                    'maxItems' => array('type' => 'integer', 'minimum' => 1, 'maximum' => 100),
+                    'currency' => array('type' => 'string'),
+                    'reason' => array('type' => 'string'),
                 ),
                 'additionalProperties' => false,
             ),
@@ -967,6 +1021,10 @@ function psa_wc_assistant_run_tool_by_name($name, $args = array()) {
             return psa_wc_assistant_tool_product_summary($args);
         case 'find_products':
             return psa_wc_assistant_tool_find_products($args);
+        case 'get_product_categories':
+            return psa_wc_assistant_tool_product_categories($args);
+        case 'find_products_by_category':
+            return psa_wc_assistant_tool_find_products_by_category($args);
         case 'get_low_stock_products':
             return psa_wc_assistant_tool_low_stock_products($args);
         case 'get_customer_summary':
@@ -982,9 +1040,72 @@ function psa_wc_assistant_run_tool_by_name($name, $args = array()) {
     }
 }
 
+function psa_wc_assistant_category_data($term) {
+    if (!$term || is_wp_error($term)) {
+        return null;
+    }
+
+    return array(
+        'id' => (int) $term->term_id,
+        'name' => $term->name,
+        'slug' => $term->slug,
+        'parent' => (int) $term->parent,
+        'count' => (int) $term->count,
+        'adminUrl' => admin_url('term.php?taxonomy=product_cat&tag_ID=' . (int) $term->term_id . '&post_type=product'),
+    );
+}
+
+function psa_wc_assistant_resolve_product_category($args) {
+    $category_id = isset($args['categoryId']) ? absint($args['categoryId']) : 0;
+    $category_slug = isset($args['categorySlug']) ? sanitize_title($args['categorySlug']) : '';
+    $category_name = isset($args['categoryName']) ? sanitize_text_field($args['categoryName']) : '';
+
+    if ($category_id) {
+        $term = get_term($category_id, 'product_cat');
+        if ($term && !is_wp_error($term)) {
+            return $term;
+        }
+    }
+
+    if ($category_slug !== '') {
+        $term = get_term_by('slug', $category_slug, 'product_cat');
+        if ($term && !is_wp_error($term)) {
+            return $term;
+        }
+    }
+
+    if ($category_name !== '') {
+        $term = get_term_by('name', $category_name, 'product_cat');
+        if ($term && !is_wp_error($term)) {
+            return $term;
+        }
+
+        $matches = get_terms(array(
+            'taxonomy' => 'product_cat',
+            'hide_empty' => false,
+            'search' => $category_name,
+            'number' => 2,
+        ));
+        if (!is_wp_error($matches) && count($matches) === 1) {
+            return $matches[0];
+        }
+    }
+
+    return new WP_Error('product_category_not_found', 'Product category not found or not specific enough.', array('status' => 404));
+}
+
 function psa_wc_assistant_product_data($product) {
     if (!$product) {
         return null;
+    }
+
+    $category_terms = array();
+    $category_product_id = $product->get_parent_id() ? $product->get_parent_id() : $product->get_id();
+    $terms = wp_get_post_terms($category_product_id, 'product_cat');
+    if (!is_wp_error($terms)) {
+        foreach ($terms as $term) {
+            $category_terms[] = psa_wc_assistant_category_data($term);
+        }
     }
 
     return array(
@@ -1000,6 +1121,7 @@ function psa_wc_assistant_product_data($product) {
         'stockStatus' => $product->get_stock_status(),
         'managingStock' => $product->managing_stock(),
         'stockQuantity' => $product->get_stock_quantity(),
+        'categories' => array_filter($category_terms),
         'permalink' => get_permalink($product->get_id()),
         'adminUrl' => get_edit_post_link($product->get_id(), 'raw'),
     );
@@ -1124,6 +1246,91 @@ function psa_wc_assistant_tool_find_products($args) {
     }
 
     return array('summary' => count($items) . ' products matched', 'data' => array('search' => $search, 'products' => $items));
+}
+
+function psa_wc_assistant_tool_product_categories($args) {
+    $limit = psa_wc_assistant_limit(isset($args['limit']) ? $args['limit'] : 20, 20, 50);
+    $search = isset($args['search']) ? sanitize_text_field($args['search']) : '';
+    $terms = get_terms(array(
+        'taxonomy' => 'product_cat',
+        'hide_empty' => false,
+        'search' => $search,
+        'number' => $limit,
+        'orderby' => 'name',
+        'order' => 'ASC',
+    ));
+
+    if (is_wp_error($terms)) {
+        return $terms;
+    }
+
+    $categories = array_values(array_filter(array_map('psa_wc_assistant_category_data', $terms)));
+    return array(
+        'summary' => count($categories) . ' product categories returned',
+        'data' => array('search' => $search, 'categories' => $categories),
+    );
+}
+
+function psa_wc_assistant_collect_category_price_targets($term, $include_variations, $limit) {
+    $products = wc_get_products(array(
+        'limit' => $limit + 1,
+        'category' => array($term->slug),
+        'status' => array('publish', 'draft'),
+        'orderby' => 'title',
+        'order' => 'ASC',
+    ));
+    $items = array();
+    $truncated = false;
+
+    foreach ($products as $product) {
+        if (count($items) >= $limit) {
+            $truncated = true;
+            break;
+        }
+
+        if ($product->is_type('simple')) {
+            $items[] = $product;
+            continue;
+        }
+
+        if ($product->is_type('variable') && $include_variations) {
+            foreach ($product->get_children() as $variation_id) {
+                if (count($items) >= $limit) {
+                    $truncated = true;
+                    break 2;
+                }
+                $variation = wc_get_product($variation_id);
+                if ($variation) {
+                    $items[] = $variation;
+                }
+            }
+        }
+    }
+
+    return array('products' => $items, 'truncated' => $truncated);
+}
+
+function psa_wc_assistant_tool_find_products_by_category($args) {
+    $term = psa_wc_assistant_resolve_product_category($args);
+    if (is_wp_error($term)) {
+        return $term;
+    }
+
+    $limit = psa_wc_assistant_limit(isset($args['limit']) ? $args['limit'] : 20, 20, 100);
+    $include_variations = !isset($args['includeVariations']) || (bool) $args['includeVariations'];
+    $collection = psa_wc_assistant_collect_category_price_targets($term, $include_variations, $limit);
+    $products = array_map('psa_wc_assistant_product_data', $collection['products']);
+
+    return array(
+        'summary' => count($products) . ' products returned for category ' . $term->name,
+        'data' => array(
+            'category' => psa_wc_assistant_category_data($term),
+            'includeVariations' => $include_variations,
+            'limit' => $limit,
+            'truncated' => $collection['truncated'],
+            'products' => $products,
+        ),
+    );
 }
 
 function psa_wc_assistant_tool_low_stock_products($args) {
@@ -1384,7 +1591,9 @@ function psa_wc_assistant_build_system_prompt($payload) {
         '- Draft actions are suggestions only and always require manual user review.',
         '- Draft action targetRoute must exactly match one registered wp-admin route below. Do not invent routes, query params, record URLs, or external links.',
         '- For one product price edit, propose update_woocommerce_product_price only when productId, currentPrice, priceField, and currency are known from tools/context.',
-        '- For bulk product price edits, propose bulk_update_woocommerce_product_prices only when every affected product or variation is explicitly listed with productId, currentPrice, newPrice, currency, and priceField. Do not draft open-ended category-wide writes.',
+        '- For itemized bulk product price edits, propose bulk_update_woocommerce_product_prices only when every affected product or variation is explicitly listed with productId, currentPrice, newPrice, currency, and priceField.',
+        '- For category-wide product price edits, use get_product_categories and find_products_by_category when useful, then propose bulk_update_woocommerce_category_product_prices with categoryId/categorySlug/categoryName, priceField, operation, currency, reason, includeVariations, and maxItems.',
+        '- Category bulk price operations allowed: set_fixed, decrease_percent, increase_percent, set_percent_of_regular_price, clear_sale_price. Use clear_sale_price only for sale_price.',
         '- V1 does not support stock writes, order status writes, customer edits, coupon edits, or sale schedules.',
         '- Do not ask for raw SQL and do not produce SQL for execution.',
         '',
@@ -1551,6 +1760,7 @@ function psa_wc_assistant_validate_direct_draft_actions($actions, $fallback_rout
         'review_coupon',
         'update_woocommerce_product_price',
         'bulk_update_woocommerce_product_prices',
+        'bulk_update_woocommerce_category_product_prices',
     );
     $validated = array();
 
@@ -1998,6 +2208,145 @@ function psa_wc_assistant_apply_bulk_price_action($action) {
     );
 }
 
+function psa_wc_assistant_calculate_category_price($product, $price_field, $operation, $payload) {
+    $decimals = function_exists('wc_get_price_decimals') ? wc_get_price_decimals() : 2;
+    $regular_price = $product->get_regular_price('edit');
+    $current_price = $price_field === 'regular_price'
+        ? $product->get_regular_price('edit')
+        : $product->get_sale_price('edit');
+
+    if ($operation === 'clear_sale_price') {
+        if ($price_field !== 'sale_price') {
+            return new WP_Error('invalid_category_price_operation', 'clear_sale_price can only be used with sale_price.', array('status' => 400));
+        }
+        return '';
+    }
+
+    if ($operation === 'set_fixed') {
+        $new_price = isset($payload['newPrice']) ? wc_format_decimal($payload['newPrice'], $decimals) : '';
+    } else {
+        $percent = isset($payload['percent']) ? (float) $payload['percent'] : 0;
+        if ($percent <= 0 || $percent > 100) {
+            return new WP_Error('invalid_category_price_percent', 'Percent must be greater than 0 and no more than 100.', array('status' => 400));
+        }
+
+        if ($operation === 'set_percent_of_regular_price') {
+            if ($price_field !== 'sale_price') {
+                return new WP_Error('invalid_category_price_operation', 'set_percent_of_regular_price can only be used with sale_price.', array('status' => 400));
+            }
+            if ($regular_price === '') {
+                return new WP_Error('missing_regular_price', 'Cannot calculate sale price because a product has no regular price.', array('status' => 400));
+            }
+            $new_price = wc_format_decimal(((float) $regular_price) * ($percent / 100), $decimals);
+        } else {
+            $base_price = $price_field === 'sale_price' ? $regular_price : $current_price;
+            if ($base_price === '') {
+                return new WP_Error('missing_base_price', 'Cannot calculate category price because a product has no base price.', array('status' => 400));
+            }
+            $factor = $operation === 'increase_percent' ? (1 + ($percent / 100)) : (1 - ($percent / 100));
+            $new_price = wc_format_decimal(((float) $base_price) * $factor, $decimals);
+        }
+    }
+
+    if ($new_price === '' || (float) $new_price <= 0) {
+        return new WP_Error('invalid_new_price', 'New price must be greater than 0.', array('status' => 400));
+    }
+
+    if ($price_field === 'sale_price' && $regular_price !== '' && (float) $new_price > (float) $regular_price) {
+        return new WP_Error('invalid_sale_price', 'Sale price cannot be greater than the regular price.', array('status' => 400));
+    }
+
+    return (string) $new_price;
+}
+
+function psa_wc_assistant_prepare_category_price_update($product, $price_field, $operation, $payload) {
+    $edit_product_id = $product->get_parent_id() ? $product->get_parent_id() : $product->get_id();
+    if (!current_user_can('manage_woocommerce') || !current_user_can('edit_product', $edit_product_id)) {
+        return new WP_Error('price_action_forbidden', 'You are not allowed to update one or more products in this category.', array('status' => 403));
+    }
+
+    $old_price = $price_field === 'regular_price'
+        ? $product->get_regular_price('edit')
+        : $product->get_sale_price('edit');
+    $new_price = psa_wc_assistant_calculate_category_price($product, $price_field, $operation, $payload);
+    if (is_wp_error($new_price)) {
+        return $new_price;
+    }
+
+    return array(
+        'product' => $product,
+        'result' => array(
+            'productId' => $product->get_parent_id() ? $product->get_parent_id() : $product->get_id(),
+            'variationId' => $product->get_parent_id() ? $product->get_id() : null,
+            'targetId' => $product->get_id(),
+            'name' => $product->get_name(),
+            'priceField' => $price_field,
+            'oldPrice' => (string) $old_price,
+            'newPrice' => (string) $new_price,
+        ),
+    );
+}
+
+function psa_wc_assistant_apply_category_price_action($action) {
+    $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
+    $term = psa_wc_assistant_resolve_product_category($payload);
+    if (is_wp_error($term)) {
+        return $term;
+    }
+
+    $price_field = isset($payload['priceField']) ? sanitize_key($payload['priceField']) : '';
+    $operation = isset($payload['operation']) ? sanitize_key($payload['operation']) : '';
+    $currency = isset($payload['currency']) ? sanitize_text_field($payload['currency']) : '';
+    $max_items = psa_wc_assistant_limit(isset($payload['maxItems']) ? $payload['maxItems'] : 100, 100, 100);
+    $include_variations = !isset($payload['includeVariations']) || (bool) $payload['includeVariations'];
+
+    if (!in_array($price_field, array('regular_price', 'sale_price'), true)) {
+        return new WP_Error('invalid_category_price_field', 'Invalid category price field.', array('status' => 400));
+    }
+
+    if (!in_array($operation, array('set_fixed', 'decrease_percent', 'increase_percent', 'set_percent_of_regular_price', 'clear_sale_price'), true)) {
+        return new WP_Error('invalid_category_price_operation', 'Invalid category price operation.', array('status' => 400));
+    }
+
+    if ($currency && function_exists('get_woocommerce_currency') && $currency !== get_woocommerce_currency()) {
+        return new WP_Error('currency_mismatch', 'Price action currency does not match the store currency.', array('status' => 400));
+    }
+
+    $collection = psa_wc_assistant_collect_category_price_targets($term, $include_variations, $max_items);
+    if ($collection['truncated']) {
+        return new WP_Error('category_price_limit_exceeded', 'This category has more products than the allowed bulk update limit. Narrow the category or use a smaller batch.', array('status' => 400));
+    }
+
+    if (count($collection['products']) === 0) {
+        return new WP_Error('category_has_no_products', 'No supported simple products or variations were found in this category.', array('status' => 404));
+    }
+
+    $prepared_updates = array();
+    foreach ($collection['products'] as $product) {
+        $prepared = psa_wc_assistant_prepare_category_price_update($product, $price_field, $operation, $payload);
+        if (is_wp_error($prepared)) {
+            return $prepared;
+        }
+        $prepared_updates[] = $prepared;
+    }
+
+    $results = array();
+    foreach ($prepared_updates as $prepared) {
+        $results[] = psa_wc_assistant_save_prepared_price_update($prepared);
+    }
+
+    return array(
+        'updatedCount' => count($results),
+        'category' => psa_wc_assistant_category_data($term),
+        'priceField' => $price_field,
+        'operation' => $operation,
+        'includeVariations' => $include_variations,
+        'currency' => function_exists('get_woocommerce_currency') ? get_woocommerce_currency() : $currency,
+        'reason' => isset($payload['reason']) ? sanitize_textarea_field($payload['reason']) : '',
+        'items' => $results,
+    );
+}
+
 function psa_wc_assistant_rest_apply_draft_action($request) {
     $action = psa_wc_assistant_get_draft_action(absint($request['id']));
     if (!$action) {
@@ -2008,13 +2357,17 @@ function psa_wc_assistant_rest_apply_draft_action($request) {
         return new WP_Error('invalid_draft_action_status', 'Draft action cannot be applied from this status.', array('status' => 409));
     }
 
-    if (!in_array($action['type'], array('update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices'), true)) {
+    if (!in_array($action['type'], array('update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices', 'bulk_update_woocommerce_category_product_prices'), true)) {
         return new WP_Error('unsupported_write_action', 'Unsupported assistant write action.', array('status' => 400));
     }
 
-    $result = $action['type'] === 'bulk_update_woocommerce_product_prices'
-        ? psa_wc_assistant_apply_bulk_price_action($action)
-        : psa_wc_assistant_apply_price_action($action);
+    if ($action['type'] === 'bulk_update_woocommerce_category_product_prices') {
+        $result = psa_wc_assistant_apply_category_price_action($action);
+    } elseif ($action['type'] === 'bulk_update_woocommerce_product_prices') {
+        $result = psa_wc_assistant_apply_bulk_price_action($action);
+    } else {
+        $result = psa_wc_assistant_apply_price_action($action);
+    }
     if (is_wp_error($result)) {
         $error_data = $result->get_error_data();
         $error_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;

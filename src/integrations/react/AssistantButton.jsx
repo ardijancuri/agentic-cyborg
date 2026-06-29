@@ -68,8 +68,10 @@ function MessageBubble({ message }) {
 const defaultWriteActionTypes = [
   'update_product_price',
   'bulk_update_product_prices',
+  'bulk_update_product_prices_by_category',
   'update_woocommerce_product_price',
   'bulk_update_woocommerce_product_prices',
+  'bulk_update_woocommerce_category_product_prices',
 ];
 
 const formatProductTarget = (item = {}) => {
@@ -92,6 +94,19 @@ const formatProductTarget = (item = {}) => {
 const summarizePricePayload = (action) => {
   const payload = action?.payload || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
+  const category = payload.categoryName || payload.categorySlug || payload.categoryId;
+
+  if (category) {
+    return [
+      `Category: ${category}`,
+      payload.priceField ? `Field: ${payload.priceField}` : '',
+      payload.operation ? `Operation: ${payload.operation}` : '',
+      payload.newPrice !== undefined && payload.newPrice !== null && payload.newPrice !== '' ? `New price: ${payload.newPrice}` : '',
+      payload.percent !== undefined && payload.percent !== null && payload.percent !== '' ? `Percent: ${payload.percent}%` : '',
+      payload.currency ? `Currency: ${payload.currency}` : '',
+      payload.maxItems ? `Limit: ${payload.maxItems} items` : '',
+    ].filter(Boolean);
+  }
 
   if (items.length > 0) {
     const preview = items.slice(0, 5).map(formatProductTarget).filter(Boolean);

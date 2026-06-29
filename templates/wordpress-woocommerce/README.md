@@ -79,5 +79,5 @@ app.use(createWooCommerceAssistantServiceRouter({
 - Read-only WooCommerce summaries and product lookup tools.
 - Markdown context stored in WordPress custom tables.
 - Draft actions stored in WordPress custom tables.
-- Approved single and bulk regular/sale price updates for simple products and variations. Bulk drafts are limited to 50 explicitly listed items.
+- Approved single, itemized bulk, and category bulk regular/sale price updates for simple products and variations. Itemized bulk drafts are limited to 50 explicitly listed items; category bulk drafts are limited to 100 resolved category items.
 - No stock writes, order status writes, customer edits, coupon edits, or sale schedules.

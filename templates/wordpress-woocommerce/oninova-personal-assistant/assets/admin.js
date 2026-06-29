@@ -1,6 +1,10 @@
 (function () {
   const config = window.PsaAssistantConfig || {};
-  const writeActionTypes = new Set(['update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices']);
+  const writeActionTypes = new Set([
+    'update_woocommerce_product_price',
+    'bulk_update_woocommerce_product_prices',
+    'bulk_update_woocommerce_category_product_prices',
+  ]);
   const closedStatuses = new Set(['applied', 'rejected']);
 
   const state = {
@@ -311,9 +315,18 @@
   function renderPayloadSummary(action) {
     const payload = action.payload || {};
     const items = Array.isArray(payload.items) ? payload.items : [];
+    const category = payload.categoryName || payload.categorySlug || payload.categoryId;
     const lines = [];
 
-    if (items.length) {
+    if (category) {
+      lines.push('Category: ' + category);
+      if (payload.priceField) lines.push('Field: ' + payload.priceField);
+      if (payload.operation) lines.push('Operation: ' + payload.operation);
+      if (payload.newPrice !== undefined && payload.newPrice !== null && payload.newPrice !== '') lines.push('New price: ' + payload.newPrice);
+      if (payload.percent !== undefined && payload.percent !== null && payload.percent !== '') lines.push('Percent: ' + payload.percent + '%');
+      if (payload.currency) lines.push('Currency: ' + payload.currency);
+      if (payload.maxItems) lines.push('Limit: ' + payload.maxItems + ' items');
+    } else if (items.length) {
       lines.push(items.length + ' product' + (items.length === 1 ? '' : 's') + ' selected');
       if (payload.priceField) lines.push('Field: ' + payload.priceField);
       if (payload.currency) lines.push('Currency: ' + payload.currency);
