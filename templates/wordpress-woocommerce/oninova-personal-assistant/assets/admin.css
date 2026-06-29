@@ -100,18 +100,121 @@
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.45;
-  white-space: pre-wrap;
 }
 
 .psa-wc-message.is-user {
   background: #2271b1;
   color: #fff;
+  white-space: pre-wrap;
 }
 
 .psa-wc-message.is-assistant {
   border: 1px solid #dcdcde;
   background: #fff;
   color: #1d2327;
+  white-space: normal;
+}
+
+.psa-markdown {
+  display: grid;
+  gap: 8px;
+  color: #1d2327;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.psa-md-heading {
+  margin: 2px 0 0;
+  color: #1d2327;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.psa-md-paragraph {
+  margin: 0;
+}
+
+.psa-md-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.psa-md-list li {
+  margin: 2px 0;
+  padding-left: 2px;
+}
+
+.psa-md-quote {
+  margin: 0;
+  border-left: 2px solid #8c8f94;
+  padding-left: 10px;
+  color: #50575e;
+}
+
+.psa-md-code-block {
+  margin: 0;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: #1d2327;
+  color: #f6f7f7;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.psa-md-inline-code {
+  border-radius: 4px;
+  background: #f0f0f1;
+  padding: 1px 4px;
+  color: #1d2327;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.psa-md-strong {
+  color: #1d2327;
+  font-weight: 700;
+}
+
+.psa-md-link {
+  color: #2271b1;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.psa-md-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #dcdcde;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.psa-md-table {
+  width: 100%;
+  min-width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+
+.psa-md-table th,
+.psa-md-table td {
+  border-bottom: 1px solid #dcdcde;
+  padding: 6px 8px;
+  vertical-align: top;
+}
+
+.psa-md-table th {
+  background: #f6f7f7;
+  color: #50575e;
+  font-weight: 700;
+}
+
+.psa-md-table tr:last-child td {
+  border-bottom: 0;
 }
 
 .psa-wc-starters,

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oninova Personal Assistant for WooCommerce
  * Description: Adds an approved AI assistant drawer for WooCommerce store operations.
- * Version: 0.1.0
+ * Version: 0.1.1
  * Author: Oninova
  * Requires Plugins: woocommerce
  */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('PSA_WC_ASSISTANT_VERSION', '0.1.0');
+define('PSA_WC_ASSISTANT_VERSION', '0.1.1');
 define('PSA_WC_ASSISTANT_REST_NAMESPACE', 'oninova-assistant/v1');
 define('PSA_WC_OPTION_MODE', 'psa_wc_assistant_mode');
 define('PSA_WC_OPTION_OPENAI_API_KEY', 'psa_wc_assistant_openai_api_key');
