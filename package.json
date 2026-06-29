@@ -1,0 +1,42 @@
+{
+  "name": "@oninova/personal-software-assistant",
+  "version": "0.1.0",
+  "description": "Reusable business AI assistant foundation for custom software, web apps, CRMs, CMSs, and websites.",
+  "type": "module",
+  "private": false,
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "files": [
+    "src",
+    "sql",
+    "examples",
+    "templates",
+    "README.md",
+    ".env.example"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check-js.mjs"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./adapters/read-only-tool-registry": "./src/adapters/readOnlyToolRegistry.js",
+    "./express": "./src/integrations/express/createAssistantRouter.js",
+    "./express/role-access": "./src/integrations/express/roleAccess.js",
+    "./react": "./src/integrations/react/AssistantButton.jsx",
+    "./react/styles.css": "./src/integrations/react/assistantStyles.css",
+    "./sql/postgres": "./sql/postgres/001_assistant_tables.sql",
+    "./examples/argjira-crm/context-sources": "./examples/argjira-crm/contextSources.js",
+    "./examples/argjira-crm/page-registry": "./examples/argjira-crm/pageRegistry.js",
+    "./examples/argjira-crm/tool-registry": "./examples/argjira-crm/crmToolRegistry.js"
+  },
+  "peerDependencies": {
+    "express": ">=4",
+    "pg": ">=8",
+    "react": ">=18"
+  }
+}
