@@ -26,12 +26,14 @@ const normalizeKey = (value, fallback = '') => {
 };
 
 const normalizeRoute = (value) => {
-  const route = asString(value).split(/[?#]/)[0];
+  const route = asString(value).split('#')[0];
   if (!route.startsWith('/')) {
     return '';
   }
 
-  return route.length > 1 ? route.replace(/\/+$/g, '') : route;
+  const [path, query = ''] = route.split('?');
+  const normalizedPath = path.length > 1 ? path.replace(/\/+$/g, '') : path;
+  return query ? `${normalizedPath}?${query}` : normalizedPath;
 };
 
 const unique = (values) => [...new Set(values.filter(Boolean))];

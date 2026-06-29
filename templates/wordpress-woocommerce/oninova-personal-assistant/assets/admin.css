@@ -1,0 +1,219 @@
+.psa-wc-settings {
+  max-width: 880px;
+  margin: 16px 0 24px;
+  padding: 16px 20px;
+  border: 1px solid #dcdcde;
+  background: #fff;
+}
+
+.psa-wc-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 100000;
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: 999px;
+  background: #1d2327;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+}
+
+.psa-wc-drawer {
+  position: fixed;
+  right: 20px;
+  bottom: 92px;
+  z-index: 100000;
+  display: none;
+  width: min(440px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 120px));
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid #c3c4c7;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.24);
+}
+
+.psa-wc-drawer.is-open {
+  display: flex;
+}
+
+.psa-wc-header,
+.psa-wc-composer {
+  flex-shrink: 0;
+  padding: 12px;
+  background: #fff;
+}
+
+.psa-wc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #dcdcde;
+}
+
+.psa-wc-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.psa-wc-subtitle {
+  margin: 4px 0 0;
+  color: #646970;
+  font-size: 12px;
+}
+
+.psa-wc-icon-button {
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid #c3c4c7;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.psa-wc-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  background: #f6f7f7;
+}
+
+.psa-wc-message-row {
+  display: flex;
+  margin: 0 0 10px;
+}
+
+.psa-wc-message-row.is-user {
+  justify-content: flex-end;
+}
+
+.psa-wc-message {
+  max-width: 90%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.psa-wc-message.is-user {
+  background: #2271b1;
+  color: #fff;
+}
+
+.psa-wc-message.is-assistant {
+  border: 1px solid #dcdcde;
+  background: #fff;
+  color: #1d2327;
+}
+
+.psa-wc-starters,
+.psa-wc-drafts {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.psa-wc-starter,
+.psa-wc-draft {
+  border: 1px solid #dcdcde;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.psa-wc-starter {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.psa-wc-draft-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.psa-wc-draft-title {
+  font-weight: 700;
+}
+
+.psa-wc-draft-reason {
+  margin: 4px 0 0;
+  color: #646970;
+  font-size: 12px;
+}
+
+.psa-wc-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  background: #f0f0f1;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.psa-wc-status-applied {
+  background: #edfaef;
+  color: #008a20;
+}
+
+.psa-wc-status-rejected,
+.psa-wc-status-failed {
+  background: #fcf0f1;
+  color: #b32d2e;
+}
+
+.psa-wc-draft-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.psa-wc-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.psa-wc-error,
+.psa-wc-loading {
+  margin: 10px 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.psa-wc-error {
+  border: 1px solid #f1aeb5;
+  background: #fcf0f1;
+  color: #8a2424;
+}
+
+.psa-wc-loading {
+  background: #fff;
+  color: #646970;
+}
+
+.psa-wc-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border-top: 1px solid #dcdcde;
+}
+
+.psa-wc-input {
+  flex: 1;
+  min-height: 48px;
+  resize: none;
+}

@@ -10,6 +10,12 @@ import { createWriteActionRegistry } from '../src/core/writeActionRegistry.js';
 import { OpenAIResponsesProvider } from '../src/providers/OpenAIResponsesProvider.js';
 import { createReadOnlyToolRegistry, clampToolLimit } from '../src/adapters/readOnlyToolRegistry.js';
 import { createAssistantRoleAuthorize } from '../src/integrations/express/roleAccess.js';
+import { createRemoteWooCommerceToolRegistry } from '../src/integrations/woocommerce/remoteToolRegistry.js';
+import { WooCommerceAssistantRunner } from '../src/integrations/woocommerce/WooCommerceAssistantRunner.js';
+import {
+  createWooCommerceAssistantSignature,
+  verifyWooCommerceAssistantSignature,
+} from '../src/integrations/woocommerce/hmac.js';
 
 const TEST_PAGE_REGISTRY = [
   {
@@ -32,6 +38,13 @@ const TEST_PAGE_REGISTRY = [
     route: '/reports',
     actionTypes: ['review_report'],
     keywords: ['reports', 'finance'],
+  },
+  {
+    id: 'wc_products',
+    label: 'WooCommerce Products',
+    route: '/wp-admin/edit.php?post_type=product',
+    actionTypes: ['update_woocommerce_product_price'],
+    keywords: ['product', 'price'],
   },
 ];
 
@@ -150,6 +163,35 @@ test('draft actions are clamped to registered host routes', () => {
   });
 
   assert.equal(resolved.route, '/reports');
+});
+
+test('woocommerce draft actions keep registered wp-admin query routes', () => {
+  const actions = validateDraftActions([
+    {
+      type: 'update_woocommerce_product_price',
+      title: 'Update product price',
+      reason: 'The owner requested a reviewed price change.',
+      targetRoute: '/invented',
+      payload: {
+        productId: 10,
+        variationId: null,
+        priceField: 'regular_price',
+        currentPrice: '100.00',
+        newPrice: '120.00',
+        currency: 'EUR',
+        reason: 'Owner requested price update',
+      },
+      confidence: 0.9,
+    },
+  ], {
+    pageRegistry: TEST_PAGE_REGISTRY,
+    fallbackRoute: '/wp-admin/admin.php?page=wc-admin',
+  });
+
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].type, 'update_woocommerce_product_price');
+  assert.equal(actions[0].targetRoute, '/wp-admin/edit.php?post_type=product');
+  assert.equal(actions[0].status, 'draft');
 });
 
 test('read-only tool registry exposes only named tools and passes context', async () => {
@@ -483,4 +525,133 @@ test('openai responses provider keeps tool-call continuation stateless with encr
     requests[1].input.some((item) => item.type === 'reasoning' && item.encrypted_content === 'encrypted-reasoning'),
     true
   );
+});
+
+test('woocommerce hmac signs and verifies request bodies', () => {
+  const body = JSON.stringify({ message: 'hello' });
+  const signed = createWooCommerceAssistantSignature({
+    body,
+    siteId: 'site-1',
+    secret: 'secret-1',
+    timestamp: Math.floor(Date.now() / 1000).toString(),
+  });
+
+  assert.equal(
+    verifyWooCommerceAssistantSignature({
+      body,
+      headers: signed.headers,
+      secret: 'secret-1',
+    }),
+    true
+  );
+  assert.equal(
+    verifyWooCommerceAssistantSignature({
+      body: JSON.stringify({ message: 'changed' }),
+      headers: signed.headers,
+      secret: 'secret-1',
+    }),
+    false
+  );
+});
+
+test('remote woocommerce tool registry signs approved tool callbacks', async () => {
+  const calls = [];
+  const registry = createRemoteWooCommerceToolRegistry({
+    toolDefinitions: [
+      {
+        type: 'function',
+        name: 'find_products',
+        description: 'Find products',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      },
+    ],
+    callback: {
+      toolsRunUrl: 'https://store.example/wp-json/oninova-assistant/v1/tools/run',
+      siteId: 'site-1',
+      siteSecret: 'secret-1',
+    },
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({ data: { products: [] }, summary: 'ok' }), { status: 200 });
+    },
+  });
+
+  const result = await registry.execute('find_products', { search: 'ring' });
+
+  assert.equal(result.summary, 'ok');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://store.example/wp-json/oninova-assistant/v1/tools/run');
+  assert.equal(Boolean(calls[0].options.headers['x-oninova-assistant-signature']), true);
+
+  await assert.rejects(
+    () => registry.execute('run_sql', {}),
+    /Unknown WooCommerce assistant tool/
+  );
+});
+
+test('woocommerce runner returns controlled unavailable response without api key', async () => {
+  const runner = new WooCommerceAssistantRunner({
+    config: readAssistantConfig({ ASSISTANT_ENABLED: 'true', ASSISTANT_PROVIDER: 'openai' }),
+  });
+
+  const result = await runner.run({ message: 'Show sales' });
+
+  assert.match(result.answer, /OPENAI_API_KEY/);
+  assert.equal(result.draftActions.length, 0);
+});
+
+test('woocommerce runner passes remote tools and write actions to provider', async () => {
+  class MockProvider {
+    constructor({ toolRegistry }) {
+      this.toolRegistry = toolRegistry;
+    }
+
+    async generate(input) {
+      assert.equal(this.toolRegistry.hasTool('find_products'), true);
+      assert.equal(input.writeActions[0].type, 'update_woocommerce_product_price');
+      assert.equal(input.pageRegistry[0].route, '/wp-admin/edit.php?post_type=product');
+      return {
+        answer: 'Done',
+        citations: [],
+        draftActions: [],
+        toolRuns: [],
+        providerResponseId: 'resp-test',
+      };
+    }
+  }
+
+  const runner = new WooCommerceAssistantRunner({
+    config: {
+      enabled: true,
+      provider: 'openai',
+      model: 'gpt-test',
+      configured: true,
+      hasApiKey: true,
+      apiKey: 'test-key',
+      maxToolCalls: 1,
+    },
+    providerFactory: (options) => new MockProvider(options),
+    getSiteSecret: async () => 'secret-1',
+  });
+
+  const result = await runner.run({
+    message: 'Find products',
+    toolDefinitions: [
+      {
+        type: 'function',
+        name: 'find_products',
+        description: 'Find products',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      },
+    ],
+    callback: {
+      toolsRunUrl: 'https://store.example/wp-json/oninova-assistant/v1/tools/run',
+      siteId: 'site-1',
+    },
+    writeActions: [{ type: 'update_woocommerce_product_price' }],
+    pageRegistry: [{ id: 'products', route: '/wp-admin/edit.php?post_type=product' }],
+  });
+
+  assert.equal(result.answer, 'Done');
+  assert.equal(result.providerResponseId, 'resp-test');
 });

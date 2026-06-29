@@ -65,7 +65,7 @@ function MessageBubble({ message }) {
   );
 }
 
-const defaultWriteActionTypes = ['update_product_price'];
+const defaultWriteActionTypes = ['update_product_price', 'update_woocommerce_product_price'];
 
 function DraftActionCard({
   action,

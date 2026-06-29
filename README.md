@@ -14,6 +14,7 @@ It is designed to be installed as a private npm addon: `@oninova/personal-softwa
 - A standard role guard and read-only tool registry helper for project adapters.
 - Optional approved write-action registry support for user-reviewed business edits.
 - A generic React floating assistant drawer for host frontends.
+- A WooCommerce integration template with a WordPress plugin and central Node service runner.
 - An Argjira CRM adapter example and a Node/React/Postgres starter template.
 
 ## Core Idea
@@ -37,6 +38,47 @@ The assistant core handles:
 - audit-friendly tool-run storage
 
 The model never executes raw SQL. It can only call tools exposed by the host adapter, and it cannot write to business tables directly. Write-capable actions are stored as draft cards and only run when the user clicks Apply.
+
+## WooCommerce Integration
+
+WooCommerce uses a WordPress plugin plus a central Node assistant service:
+
+- WordPress stores assistant conversations, messages, context documents, draft actions, and tool runs in custom `{prefix}psa_assistant_*` tables.
+- WordPress exposes `/wp-json/oninova-assistant/v1/*` endpoints for the admin drawer and signed tool callbacks.
+- The central Node service owns `OPENAI_API_KEY` and mounts `POST /v1/woocommerce/run`.
+- WooCommerce data access stays inside the plugin through WooCommerce/WordPress APIs.
+- V1 write support is limited to reviewed `regular_price` and `sale_price` updates for simple products and variations.
+
+Plugin template:
+
+```text
+templates/wordpress-woocommerce/oninova-personal-assistant/
+```
+
+Central service sketch:
+
+```js
+import express from 'express';
+import { createWooCommerceAssistantServiceRouter } from '@oninova/personal-software-assistant/woocommerce';
+
+const app = express();
+
+app.use(express.json({
+  verify: (req, res, buffer) => {
+    req.rawBody = buffer.toString('utf8');
+  },
+}));
+
+app.use(createWooCommerceAssistantServiceRouter({
+  express,
+  requireSignature: true,
+  getSiteSecret: async (siteId) => {
+    return process.env[`WOO_ASSISTANT_SECRET_${siteId}`];
+  },
+}));
+```
+
+The WordPress plugin sends only signed requests to the central service. The service uses the shared site secret to sign tool callbacks back to WordPress.
 
 ## Install As Addon
 
@@ -204,6 +246,12 @@ The starter template lives in:
 
 ```text
 templates/node-react-postgres/
+```
+
+WooCommerce template lives in:
+
+```text
+templates/wordpress-woocommerce/
 ```
 
 ## Test

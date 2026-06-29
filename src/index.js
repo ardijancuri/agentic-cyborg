@@ -10,3 +10,14 @@ export { createPostgresAssistantRepository } from './storage/postgresRepository.
 export { refreshAssistantContext, createStaticContextSource } from './context/contextRefresh.js';
 export { createAssistantRouter } from './integrations/express/createAssistantRouter.js';
 export { createAssistantRoleAuthorize } from './integrations/express/roleAccess.js';
+export {
+  WooCommerceAssistantRunner,
+  createWooCommerceAssistantRunner,
+  createWooCommerceAssistantServiceRouter,
+} from './integrations/woocommerce/WooCommerceAssistantRunner.js';
+export { createRemoteWooCommerceToolRegistry } from './integrations/woocommerce/remoteToolRegistry.js';
+export {
+  createWooCommerceAssistantSignature,
+  verifyWooCommerceAssistantSignature,
+  WOO_ASSISTANT_SIGNATURE_HEADERS,
+} from './integrations/woocommerce/hmac.js';
