@@ -12,6 +12,7 @@ It is designed to be installed as a private npm addon: `@oninova/personal-softwa
 - An OpenAI Responses API provider that uses approved function tools and structured draft actions.
 - A generic Express router factory for host backends.
 - A standard role guard and read-only tool registry helper for project adapters.
+- Optional approved write-action registry support for user-reviewed business edits.
 - A generic React floating assistant drawer for host frontends.
 - An Argjira CRM adapter example and a Node/React/Postgres starter template.
 
@@ -23,7 +24,8 @@ Each host app provides:
 2. `toolRegistry`: approved read-only tools for that app's database.
 3. `contextSources`: functions that generate Markdown context documents from deterministic data.
 4. `pageRegistry`: the host app's real frontend pages/routes for draft action links.
-5. Auth/role checks from the host application.
+5. Optional `writeActionRegistry`: approved write handlers for reviewed actions like price edits.
+6. Auth/role checks from the host application.
 
 The assistant core handles:
 
@@ -31,9 +33,10 @@ The assistant core handles:
 - Markdown context storage
 - OpenAI tool orchestration
 - draft action validation
+- approved apply/reject state for write-capable draft actions
 - audit-friendly tool-run storage
 
-The model never executes raw SQL. It can only call tools exposed by the host adapter.
+The model never executes raw SQL. It can only call tools exposed by the host adapter, and it cannot write to business tables directly. Write-capable actions are stored as draft cards and only run when the user clicks Apply.
 
 ## Install As Addon
 
@@ -75,6 +78,7 @@ import {
   createAssistantRouter,
   createAssistantService,
   createPostgresAssistantRepository,
+  createWriteActionRegistry,
   readAssistantConfig,
 } from '@oninova/personal-software-assistant';
 import { createProjectToolRegistry } from './assistant/toolRegistry.js';
@@ -91,6 +95,12 @@ const assistantService = createAssistantService({
   toolRegistry,
   contextSources: createProjectContextSources(),
   pageRegistry: createProjectPageRegistry(),
+  writeActionRegistry: createWriteActionRegistry({
+    actions: [
+      // Host apps add reviewed write handlers here.
+      // Example: update_product_price -> update only the approved price column.
+    ],
+  }),
   fallbackRoute: '/dashboard',
   config: readAssistantConfig(process.env),
   appName: 'Project Name',
@@ -115,14 +125,44 @@ const assistantApi = {
   chat: (data) => api.post('/assistant/chat', data).then((res) => res.data),
   getContext: () => api.get('/assistant/context').then((res) => res.data),
   refreshContext: () => api.post('/assistant/context/refresh').then((res) => res.data),
+  applyDraftAction: (id) => api.post(`/assistant/draft-actions/${id}/apply`).then((res) => res.data),
+  rejectDraftAction: (id) => api.post(`/assistant/draft-actions/${id}/reject`).then((res) => res.data),
 };
 
 <AssistantButton
   api={assistantApi}
   canUseAssistant={user.role === 'admin' || user.role === 'full_admin'}
+  canApplyActions={user.role === 'full_admin'}
   locale={language}
 />;
 ```
+
+## Approved Write Actions
+
+Write actions are optional and project-specific. Each action has a stable `type`, a payload shape, allowed roles, and an `apply()` handler owned by the host app.
+
+```js
+const writeActionRegistry = createWriteActionRegistry({
+  actions: [
+    {
+      type: 'update_product_price',
+      handlerName: 'update_stock_item_price',
+      description: 'Update one existing product/stock item price after full_admin approval.',
+      requiredRoles: ['full_admin'],
+      payloadSchema: {
+        type: 'object',
+        required: ['stockItemId', 'currentPrice', 'newPrice', 'currency', 'reason'],
+      },
+      apply: async ({ action, user, requestContext }) => {
+        // Validate payload, check stale current price, update only the allowed price column,
+        // then audit old price/new price/user/draft action id in the host application.
+      },
+    },
+  ],
+});
+```
+
+The assistant may propose `update_product_price`, but it must stay `requiresUserReview: true`. The backend stores it as `draft`; only `POST /api/assistant/draft-actions/:id/apply` can mark it `applied`.
 
 ## Environment Variables
 
@@ -145,6 +185,7 @@ If `OPENAI_API_KEY` is missing, the assistant still mounts and stores history, b
 - Generate Markdown context from stable business summaries.
 - Register real frontend routes in `pageRegistry`; draft actions are clamped to those routes.
 - Create draft action types that only guide users to existing screens.
+- Add write handlers only for narrow, reviewed updates. Keep each handler role-aware, transactional, and audited.
 - Add role checks before mounting `/api/assistant`.
 - Apply the assistant SQL schema in that app's database.
 

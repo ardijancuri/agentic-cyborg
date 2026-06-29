@@ -275,6 +275,14 @@
   gap: 10px;
 }
 
+.psa-draft-badges {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .psa-draft-title {
   font-size: 14px;
   font-weight: 700;
@@ -294,12 +302,74 @@
   font-weight: 700;
 }
 
+.psa-status {
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.psa-status-applied {
+  border-color: #bbf7d0;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.psa-status-rejected {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.psa-status-failed {
+  border-color: #fed7aa;
+  background: #ffedd5;
+  color: #9a3412;
+}
+
 .psa-link {
   display: inline-block;
   margin-top: 10px;
   color: #111827;
   font-size: 12px;
   font-weight: 700;
+}
+
+.psa-draft-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.psa-action-apply,
+.psa-action-reject {
+  height: 34px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.psa-action-apply {
+  border: 1px solid #111827;
+  background: #111827;
+  color: #fff;
+}
+
+.psa-action-reject {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #111827;
+}
+
+.psa-action-apply:disabled,
+.psa-action-reject:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .psa-composer {

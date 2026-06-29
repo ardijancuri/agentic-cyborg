@@ -7,6 +7,7 @@ import { createProjectToolRegistry } from './toolRegistry.js';
 import { createProjectContextSources } from './contextSources.js';
 import { createProjectPageRegistry } from './pageRegistry.js';
 import { createProjectAuditLogger } from './auditLogger.js';
+import { createProjectWriteActionRegistry } from './writeActionRegistry.js';
 
 export const createProjectAssistantService = ({
   pool,
@@ -22,6 +23,7 @@ export const createProjectAssistantService = ({
     toolRegistry: createProjectToolRegistry({ pool }),
     contextSources: createProjectContextSources(),
     pageRegistry: createProjectPageRegistry(),
+    writeActionRegistry: createProjectWriteActionRegistry(),
     fallbackRoute: '/dashboard',
     config: readAssistantConfig(process.env),
     appName,

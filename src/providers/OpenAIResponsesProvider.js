@@ -126,6 +126,7 @@ export class OpenAIResponsesProvider {
     extraInstructions = [],
     pageRegistry = this.draftActionOptions.pageRegistry,
     fallbackRoute = this.draftActionOptions.fallbackRoute,
+    writeActions = [],
     user = null,
     requestContext = {},
   }) {
@@ -138,6 +139,7 @@ export class OpenAIResponsesProvider {
       extraInstructions,
       pageRegistry,
       fallbackRoute,
+      writeActions,
     });
     const draftActionOptions = {
       ...this.draftActionOptions,

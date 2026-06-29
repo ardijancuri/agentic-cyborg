@@ -25,6 +25,7 @@
   "exports": {
     ".": "./src/index.js",
     "./adapters/read-only-tool-registry": "./src/adapters/readOnlyToolRegistry.js",
+    "./core/write-action-registry": "./src/core/writeActionRegistry.js",
     "./express": "./src/integrations/express/createAssistantRouter.js",
     "./express/role-access": "./src/integrations/express/roleAccess.js",
     "./react": "./src/integrations/react/AssistantButton.jsx",

@@ -159,9 +159,9 @@ export const createPostgresAssistantRepository = ({ pool, normalizeUserId = defa
         const result = await pool.query(
           `INSERT INTO assistant_draft_actions (
             conversation_id, message_id, type, title, reason, target_route,
-            payload, confidence, requires_user_review
+            payload, confidence, requires_user_review, status, metadata
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10)
           RETURNING *`,
           [
             conversationId,
@@ -172,12 +172,41 @@ export const createPostgresAssistantRepository = ({ pool, normalizeUserId = defa
             action.targetRoute,
             safeJson(action.payload),
             action.confidence,
+            action.status || 'draft',
+            safeJson(action.metadata),
           ]
         );
         saved.push(result.rows[0]);
       }
 
       return saved;
+    },
+
+    async getDraftActionForUser(id, user) {
+      const result = await pool.query(
+        `SELECT da.*
+         FROM assistant_draft_actions da
+         LEFT JOIN assistant_conversations c ON c.id = da.conversation_id
+         WHERE da.id = $1
+           AND (c.user_id = $2 OR $2::uuid IS NULL)
+         LIMIT 1`,
+        [id, normalizeUserId(user)]
+      );
+
+      return result.rows[0] || null;
+    },
+
+    async updateDraftActionStatus({ id, status, metadata = {} }) {
+      const result = await pool.query(
+        `UPDATE assistant_draft_actions
+         SET status = $2,
+             metadata = $3
+         WHERE id = $1
+         RETURNING *`,
+        [id, status, safeJson(metadata)]
+      );
+
+      return result.rows[0] || null;
     },
 
     async addToolRun({ conversationId, messageId = null, toolName, args = {}, resultSummary, status = 'completed', error = null, durationMs = null }) {

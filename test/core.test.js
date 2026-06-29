@@ -6,6 +6,7 @@ import { buildSystemPrompt, buildUnavailableAssistantMessage } from '../src/core
 import { resolveDraftActionRoute } from '../src/core/pageRegistry.js';
 import { refreshAssistantContext, createStaticContextSource } from '../src/context/contextRefresh.js';
 import { AssistantService } from '../src/core/AssistantService.js';
+import { createWriteActionRegistry } from '../src/core/writeActionRegistry.js';
 import { OpenAIResponsesProvider } from '../src/providers/OpenAIResponsesProvider.js';
 import { createReadOnlyToolRegistry, clampToolLimit } from '../src/adapters/readOnlyToolRegistry.js';
 import { createAssistantRoleAuthorize } from '../src/integrations/express/roleAccess.js';
@@ -79,6 +80,28 @@ test('draft actions are always review-only', () => {
   assert.equal(actions[0].type, 'operational_note');
   assert.equal(actions[0].requiresUserReview, true);
   assert.equal(actions[0].confidence, 1);
+  assert.equal(actions[0].status, 'draft');
+});
+
+test('model-proposed draft action status is ignored', () => {
+  const actions = validateDraftActions([
+    {
+      type: 'update_product_price',
+      title: 'Update product price',
+      reason: 'Owner requested a reviewed price update.',
+      targetRoute: '/stock',
+      payload: { stockItemId: 'item-1', currentPrice: 10, newPrice: 12 },
+      confidence: 0.9,
+      requiresUserReview: false,
+      status: 'applied',
+    },
+  ], {
+    pageRegistry: TEST_PAGE_REGISTRY,
+    fallbackRoute: '/dashboard',
+  });
+
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].status, 'draft');
 });
 
 test('system prompt includes host app and tool names', () => {
@@ -263,6 +286,137 @@ test('assistant service returns controlled unconfigured response', async () => {
 
   assert.match(result.answer, /OPENAI_API_KEY/);
   assert.equal(result.draftActions.length, 0);
+});
+
+test('assistant service returns controlled error when write registry is missing', async () => {
+  const service = new AssistantService({
+    repository: {
+      async getDraftActionForUser() {
+        return { id: 'action-1', type: 'update_product_price', status: 'draft', metadata: {} };
+      },
+      async updateDraftActionStatus() {
+        return null;
+      },
+    },
+    config: readAssistantConfig({ ASSISTANT_PROVIDER: 'openai' }),
+    toolRegistry: {
+      listDefinitions: () => [],
+      execute: async () => ({ data: {}, summary: 'ok' }),
+    },
+  });
+
+  await assert.rejects(
+    () => service.applyDraftAction({ actionId: 'action-1', user: { id: 'user-1', role: 'full_admin' } }),
+    /write actions are not configured/
+  );
+});
+
+test('write action registry blocks non-authorized users', async () => {
+  const registry = createWriteActionRegistry({
+    actions: [
+      {
+        type: 'update_product_price',
+        apply: async () => ({ ok: true }),
+      },
+    ],
+  });
+
+  await assert.rejects(
+    () => registry.apply(
+      { id: 'action-1', type: 'update_product_price', payload: {} },
+      { user: { id: 'user-1', role: 'admin' } }
+    ),
+    /Only authorized users/
+  );
+});
+
+test('assistant service applies write action and updates status', async () => {
+  const action = {
+    id: 'action-1',
+    conversation_id: 'conversation-1',
+    type: 'update_product_price',
+    title: 'Update price',
+    reason: 'Owner requested it',
+    target_route: '/stock',
+    payload: { stockItemId: 'item-1', currentPrice: 10, newPrice: 12 },
+    confidence: 0.9,
+    requires_user_review: true,
+    status: 'draft',
+    metadata: {},
+  };
+  const statuses = [];
+  const service = new AssistantService({
+    repository: {
+      async getDraftActionForUser() {
+        return action;
+      },
+      async updateDraftActionStatus(update) {
+        statuses.push(update);
+        return { ...action, status: update.status, metadata: update.metadata };
+      },
+    },
+    config: readAssistantConfig({ ASSISTANT_PROVIDER: 'openai' }),
+    toolRegistry: {
+      listDefinitions: () => [],
+      execute: async () => ({ data: {}, summary: 'ok' }),
+    },
+    writeActionRegistry: createWriteActionRegistry({
+      actions: [
+        {
+          type: 'update_product_price',
+          apply: async ({ action: draftAction }) => ({ updated: draftAction.payload.stockItemId }),
+        },
+      ],
+    }),
+  });
+
+  const result = await service.applyDraftAction({
+    actionId: 'action-1',
+    user: { id: 'user-1', role: 'full_admin' },
+  });
+
+  assert.equal(result.draftAction.status, 'applied');
+  assert.equal(statuses[0].status, 'applied');
+  assert.equal(statuses[0].metadata.applyResult.updated, 'item-1');
+});
+
+test('assistant service rejects draft action and updates status', async () => {
+  const action = {
+    id: 'action-1',
+    conversation_id: 'conversation-1',
+    type: 'update_product_price',
+    title: 'Update price',
+    reason: 'Owner requested it',
+    target_route: '/stock',
+    payload: {},
+    confidence: 0.8,
+    requires_user_review: true,
+    status: 'draft',
+    metadata: {},
+  };
+  const service = new AssistantService({
+    repository: {
+      async getDraftActionForUser() {
+        return action;
+      },
+      async updateDraftActionStatus(update) {
+        return { ...action, status: update.status, metadata: update.metadata };
+      },
+    },
+    config: readAssistantConfig({ ASSISTANT_PROVIDER: 'openai' }),
+    toolRegistry: {
+      listDefinitions: () => [],
+      execute: async () => ({ data: {}, summary: 'ok' }),
+    },
+  });
+
+  const result = await service.rejectDraftAction({
+    actionId: 'action-1',
+    user: { id: 'user-1', role: 'admin' },
+  });
+
+  assert.equal(result.draftAction.status, 'rejected');
+  assert.equal(result.draftAction.metadata.rejectedBy, 'user-1');
 });
 
 test('openai responses provider keeps tool-call continuation stateless with encrypted reasoning', async () => {

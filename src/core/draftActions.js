@@ -8,6 +8,7 @@ const DEFAULT_DRAFT_TYPES = new Set([
   'review_stock',
   'review_purchase',
   'review_report',
+  'update_product_price',
   'operational_note',
 ]);
 
@@ -66,6 +67,7 @@ export const normalizeDraftAction = (action = {}, options = {}) => {
     payload: normalizePayload(action.payload),
     confidence: normalizeConfidence(action.confidence),
     requiresUserReview: true,
+    status: 'draft',
   };
 };
 

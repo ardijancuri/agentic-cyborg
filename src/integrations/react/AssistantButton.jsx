@@ -12,10 +12,21 @@ const defaultLabels = {
   working: 'Working...',
   open: 'Open',
   send: 'Send',
+  apply: 'Apply',
+  applying: 'Applying...',
+  reject: 'Reject',
+  rejecting: 'Rejecting...',
+  draft: 'Draft',
+  applied: 'Applied',
+  rejected: 'Rejected',
+  failed: 'Failed',
+  applyNotAllowed: 'Only authorized users can apply',
   placeholder: 'Ask about the business...',
   loadContextError: 'Could not load assistant context',
   assistantError: 'Assistant request failed',
   refreshError: 'Could not refresh context',
+  applyError: 'Could not apply draft action',
+  rejectError: 'Could not reject draft action',
 };
 
 const defaultStarterMessages = [
@@ -54,7 +65,22 @@ function MessageBubble({ message }) {
   );
 }
 
-function DraftActionCard({ action, labels }) {
+const defaultWriteActionTypes = ['update_product_price'];
+
+function DraftActionCard({
+  action,
+  labels,
+  isWriteAction,
+  canApplyActions,
+  busyState,
+  onApply,
+  onReject,
+}) {
+  const status = action.status || 'draft';
+  const isClosed = status === 'applied' || status === 'rejected';
+  const canShowControls = isWriteAction && !isClosed;
+  const statusLabel = labels[status] || status;
+
   return (
     <div className="psa-draft-card">
       <div className="psa-draft-head">
@@ -62,12 +88,36 @@ function DraftActionCard({ action, labels }) {
           <div className="psa-draft-title">{action.title}</div>
           <p className="psa-draft-reason">{action.reason}</p>
         </div>
-        <span className="psa-confidence">{Math.round((action.confidence || 0) * 100)}%</span>
+        <div className="psa-draft-badges">
+          {isWriteAction && <span className={`psa-status psa-status-${status}`}>{statusLabel}</span>}
+          <span className="psa-confidence">{Math.round((action.confidence || 0) * 100)}%</span>
+        </div>
       </div>
       {action.targetRoute && (
         <a className="psa-link" href={action.targetRoute}>
           {labels.open}
         </a>
+      )}
+      {canShowControls && (
+        <div className="psa-draft-actions">
+          <button
+            type="button"
+            className="psa-action-apply"
+            onClick={() => onApply(action)}
+            disabled={!canApplyActions || busyState === 'apply' || busyState === 'reject'}
+            title={!canApplyActions ? labels.applyNotAllowed : labels.apply}
+          >
+            {busyState === 'apply' ? labels.applying : labels.apply}
+          </button>
+          <button
+            type="button"
+            className="psa-action-reject"
+            onClick={() => onReject(action)}
+            disabled={busyState === 'apply' || busyState === 'reject'}
+          >
+            {busyState === 'reject' ? labels.rejecting : labels.reject}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -76,9 +126,13 @@ function DraftActionCard({ action, labels }) {
 export default function AssistantButton({
   api,
   canUseAssistant = true,
+  canApplyActions = true,
   locale = 'en',
   labels: providedLabels,
   starterMessages = defaultStarterMessages,
+  writeActionTypes = defaultWriteActionTypes,
+  onDraftActionApplied,
+  onDraftActionRejected,
 }) {
   const labels = mergeLabels(providedLabels);
   const [isOpen, setIsOpen] = useState(false);
@@ -90,6 +144,7 @@ export default function AssistantButton({
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [actionBusy, setActionBusy] = useState({});
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -180,6 +235,74 @@ export default function AssistantButton({
     }
   };
 
+  const replaceDraftAction = (nextAction) => {
+    if (!nextAction?.id) {
+      return;
+    }
+
+    setDraftActions((current) => current.map((action) => (
+      action.id === nextAction.id ? { ...action, ...nextAction } : action
+    )));
+  };
+
+  const applyDraftAction = async (action) => {
+    if (!api?.applyDraftAction || !action?.id) {
+      return;
+    }
+
+    setError('');
+    setActionBusy((current) => ({ ...current, [action.id]: 'apply' }));
+
+    try {
+      const data = await api.applyDraftAction(action.id);
+      if (data?.draftAction) {
+        replaceDraftAction(data.draftAction);
+      }
+      onDraftActionApplied?.(data);
+    } catch (requestError) {
+      const message = requestError?.message || labels.applyError;
+      setError(message);
+      if (requestError?.status !== 403) {
+        replaceDraftAction({
+          ...action,
+          status: 'failed',
+          metadata: { ...(action.metadata || {}), error: message },
+        });
+      }
+    } finally {
+      setActionBusy((current) => {
+        const next = { ...current };
+        delete next[action.id];
+        return next;
+      });
+    }
+  };
+
+  const rejectDraftAction = async (action) => {
+    if (!api?.rejectDraftAction || !action?.id) {
+      return;
+    }
+
+    setError('');
+    setActionBusy((current) => ({ ...current, [action.id]: 'reject' }));
+
+    try {
+      const data = await api.rejectDraftAction(action.id);
+      if (data?.draftAction) {
+        replaceDraftAction(data.draftAction);
+      }
+      onDraftActionRejected?.(data);
+    } catch (requestError) {
+      setError(requestError?.message || labels.rejectError);
+    } finally {
+      setActionBusy((current) => {
+        const next = { ...current };
+        delete next[action.id];
+        return next;
+      });
+    }
+  };
+
   return (
     <>
       <button
@@ -244,7 +367,16 @@ export default function AssistantButton({
               <div className="psa-drafts">
                 <div className="psa-section-label">{labels.draftActions}</div>
                 {draftActions.map((action) => (
-                  <DraftActionCard key={action.id || action.title} action={action} labels={labels} />
+                  <DraftActionCard
+                    key={action.id || action.title}
+                    action={action}
+                    labels={labels}
+                    isWriteAction={writeActionTypes.includes(action.type)}
+                    canApplyActions={canApplyActions}
+                    busyState={actionBusy[action.id]}
+                    onApply={applyDraftAction}
+                    onReject={rejectDraftAction}
+                  />
                 ))}
               </div>
             )}

@@ -40,6 +40,8 @@ const serializeDraftAction = (draft) => ({
   payload: draft.payload,
   confidence: Number(draft.confidence || 0),
   requiresUserReview: draft.requires_user_review ?? draft.requiresUserReview,
+  status: draft.status,
+  metadata: draft.metadata,
 });
 
 const noopAuditLogger = async () => {};
@@ -56,6 +58,7 @@ export class AssistantService {
     extraInstructions = [],
     pageRegistry = [],
     fallbackRoute = '/',
+    writeActionRegistry = null,
   } = {}) {
     if (!repository) {
       throw new Error('AssistantService requires a repository');
@@ -75,6 +78,7 @@ export class AssistantService {
     this.extraInstructions = extraInstructions;
     this.pageRegistry = pageRegistry;
     this.fallbackRoute = fallbackRoute;
+    this.writeActionRegistry = writeActionRegistry;
   }
 
   getStatus() {
@@ -239,6 +243,7 @@ export class AssistantService {
       extraInstructions: this.extraInstructions,
       pageRegistry: this.pageRegistry,
       fallbackRoute: this.fallbackRoute,
+      writeActions: this.writeActionRegistry?.listDefinitions?.() || [],
       user,
       requestContext,
     });
@@ -278,6 +283,119 @@ export class AssistantService {
       citations: result.citations,
       draftActions: savedDrafts.map(serializeDraftAction),
     };
+  }
+
+  async applyDraftAction({ actionId, user, requestContext = {} }) {
+    if (!this.writeActionRegistry?.apply) {
+      const error = new Error('Assistant write actions are not configured');
+      error.status = 400;
+      throw error;
+    }
+
+    if (!this.repository.getDraftActionForUser || !this.repository.updateDraftActionStatus) {
+      const error = new Error('Assistant repository does not support draft action updates');
+      error.status = 500;
+      throw error;
+    }
+
+    const action = await this.repository.getDraftActionForUser(actionId, user);
+    if (!action) {
+      const error = new Error('Draft action not found');
+      error.status = 404;
+      throw error;
+    }
+
+    if (action.status && action.status !== 'draft' && action.status !== 'failed') {
+      const error = new Error(`Draft action cannot be applied from status: ${action.status}`);
+      error.status = 409;
+      throw error;
+    }
+
+    try {
+      const result = await this.writeActionRegistry.apply(action, { user, requestContext });
+      const metadata = {
+        ...(action.metadata || {}),
+        appliedAt: new Date().toISOString(),
+        appliedBy: user?.id || null,
+        applyResult: result || {},
+      };
+      const saved = await this.repository.updateDraftActionStatus({
+        id: action.id,
+        status: 'applied',
+        metadata,
+      });
+
+      await this.auditLogger({
+        user,
+        requestContext,
+        module: 'assistant',
+        action: 'draft_action_apply',
+        targetType: 'assistant_draft_action',
+        targetId: action.id,
+        description: `Applied assistant draft action ${action.type}`,
+        metadata: { conversationId: action.conversation_id || action.conversationId, result },
+      });
+
+      return { draftAction: serializeDraftAction(saved), result };
+    } catch (error) {
+      if (error.status !== 403 && action?.id && this.repository.updateDraftActionStatus) {
+        await this.repository.updateDraftActionStatus({
+          id: action.id,
+          status: 'failed',
+          metadata: {
+            ...(action.metadata || {}),
+            failedAt: new Date().toISOString(),
+            error: error.message,
+          },
+        }).catch(() => null);
+      }
+
+      throw error;
+    }
+  }
+
+  async rejectDraftAction({ actionId, user, requestContext = {} }) {
+    if (!this.repository.getDraftActionForUser || !this.repository.updateDraftActionStatus) {
+      const error = new Error('Assistant repository does not support draft action updates');
+      error.status = 500;
+      throw error;
+    }
+
+    const action = await this.repository.getDraftActionForUser(actionId, user);
+    if (!action) {
+      const error = new Error('Draft action not found');
+      error.status = 404;
+      throw error;
+    }
+
+    if (action.status && action.status !== 'draft' && action.status !== 'failed') {
+      const error = new Error(`Draft action cannot be rejected from status: ${action.status}`);
+      error.status = 409;
+      throw error;
+    }
+
+    const saved = await this.repository.updateDraftActionStatus({
+      id: action.id,
+      status: 'rejected',
+      metadata: {
+        ...(action.metadata || {}),
+        rejectedAt: new Date().toISOString(),
+        rejectedBy: user?.id || null,
+      },
+    });
+
+    await this.auditLogger({
+      user,
+      requestContext,
+      module: 'assistant',
+      action: 'draft_action_reject',
+      targetType: 'assistant_draft_action',
+      targetId: action.id,
+      description: `Rejected assistant draft action ${action.type}`,
+      metadata: { conversationId: action.conversation_id || action.conversationId },
+    });
+
+    return { draftAction: serializeDraftAction(saved) };
   }
 }
 

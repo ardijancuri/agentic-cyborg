@@ -3,6 +3,7 @@ export { AssistantService, createAssistantService } from './core/AssistantServic
 export { buildSystemPrompt, buildUnavailableAssistantMessage } from './core/promptBuilder.js';
 export { normalizeDraftAction, validateDraftActions } from './core/draftActions.js';
 export { normalizePageRegistry, formatPageRegistryForPrompt, resolveDraftActionRoute } from './core/pageRegistry.js';
+export { createWriteActionRegistry, formatWriteActionsForPrompt } from './core/writeActionRegistry.js';
 export { createReadOnlyToolRegistry, clampToolLimit } from './adapters/readOnlyToolRegistry.js';
 export { OpenAIResponsesProvider } from './providers/OpenAIResponsesProvider.js';
 export { createPostgresAssistantRepository } from './storage/postgresRepository.js';

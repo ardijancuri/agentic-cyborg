@@ -1,4 +1,5 @@
 import { formatPageRegistryForPrompt } from './pageRegistry.js';
+import { formatWriteActionsForPrompt } from './writeActionRegistry.js';
 
 const trimBlock = (value = '', maxLength = 4000) => {
   const text = String(value || '').trim();
@@ -21,6 +22,7 @@ export const buildSystemPrompt = ({
   extraInstructions = [],
   pageRegistry = [],
   fallbackRoute = '/',
+  writeActions = [],
 } = {}) => {
   const context = contextDocuments.length > 0
     ? contextDocuments.map(formatContextDocument).join('\n\n---\n\n')
@@ -28,6 +30,7 @@ export const buildSystemPrompt = ({
 
   const toolNames = toolDefinitions.map((tool) => tool.name).join(', ') || 'none';
   const pageRoutes = formatPageRegistryForPrompt(pageRegistry, { fallbackRoute });
+  const writeActionText = formatWriteActionsForPrompt(writeActions);
 
   return [
     'You are a reusable personal business AI assistant embedded in custom business software.',
@@ -42,9 +45,10 @@ export const buildSystemPrompt = ({
     '- Use generated Markdown context first for stable business orientation.',
     '- Use approved read-only tools for live numbers, lists, and statistics.',
     '- Never invent database values. If a number is unavailable, say what should be checked.',
-    '- Never claim that you changed business data.',
+    '- Never claim that you changed business data unless a separate user-approved apply action succeeds.',
     '- Draft actions are suggestions only and always require manual user review.',
     '- Draft action targetRoute must exactly match one registered page route below. Do not invent routes, query params, record URLs, or external links.',
+    '- Write-capable draft actions must include the exact payload needed for review and must keep requiresUserReview true.',
     '- Do not ask for raw SQL and do not produce SQL for execution.',
     ...extraInstructions.map((instruction) => `- ${instruction}`),
     '',
@@ -53,6 +57,9 @@ export const buildSystemPrompt = ({
     '',
     'Registered pages for draft action links:',
     pageRoutes,
+    '',
+    'Approved write-capable draft actions:',
+    writeActionText,
     '',
     'Generated Markdown business context:',
     context,
