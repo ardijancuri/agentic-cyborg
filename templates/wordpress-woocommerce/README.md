@@ -7,16 +7,30 @@ This template contains an installable WordPress plugin for WooCommerce stores.
 1. Copy `oninova-personal-assistant` into `wp-content/plugins/`.
 2. Activate **Oninova Personal Assistant for WooCommerce** in WordPress.
 3. Open **WooCommerce > AI Assistant**.
-4. Configure:
-   - Assistant service URL, for example `https://assistant.example.com`.
-   - Site ID.
-   - Site secret.
+4. Choose **Easy: WordPress calls OpenAI directly**.
+5. Paste the OpenAI API key and save.
 
-The plugin stores assistant state in WordPress custom tables and calls a central Node service that owns the OpenAI API key.
+The plugin stores assistant state in WordPress custom tables and uses WooCommerce APIs for store data.
 
-## Central Service
+## Easy Mode
 
-For local testing, copy:
+This is the recommended setup for a single WooCommerce store:
+
+```text
+WooCommerce > AI Assistant
+Assistant mode: Easy
+OpenAI API key: paste key
+OpenAI model: gpt-5.4-mini
+```
+
+No Node service is required in this mode.
+The API key is saved in WordPress options and is not exposed to the assistant chat JavaScript.
+
+## Advanced Central Service
+
+Use this when one hosted assistant service should support multiple stores or when the OpenAI key should not be stored in WordPress.
+
+For local central-service testing, copy:
 
 ```text
 templates/wordpress-woocommerce/.env.local.example

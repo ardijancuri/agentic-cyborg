@@ -13,9 +13,13 @@ if (!defined('ABSPATH')) {
 
 define('PSA_WC_ASSISTANT_VERSION', '0.1.0');
 define('PSA_WC_ASSISTANT_REST_NAMESPACE', 'oninova-assistant/v1');
+define('PSA_WC_OPTION_MODE', 'psa_wc_assistant_mode');
+define('PSA_WC_OPTION_OPENAI_API_KEY', 'psa_wc_assistant_openai_api_key');
+define('PSA_WC_OPTION_OPENAI_MODEL', 'psa_wc_assistant_openai_model');
 define('PSA_WC_OPTION_SERVICE_URL', 'psa_wc_assistant_service_url');
 define('PSA_WC_OPTION_SITE_ID', 'psa_wc_assistant_site_id');
 define('PSA_WC_OPTION_SITE_SECRET', 'psa_wc_assistant_site_secret');
+define('PSA_WC_DEFAULT_OPENAI_MODEL', 'gpt-5.4-mini');
 
 function psa_wc_assistant_table($name) {
     global $wpdb;
@@ -44,6 +48,14 @@ function psa_wc_admin_path($relative) {
 }
 
 function psa_wc_assistant_activate() {
+    if (!get_option(PSA_WC_OPTION_MODE)) {
+        update_option(PSA_WC_OPTION_MODE, 'direct', false);
+    }
+
+    if (!get_option(PSA_WC_OPTION_OPENAI_MODEL)) {
+        update_option(PSA_WC_OPTION_OPENAI_MODEL, PSA_WC_DEFAULT_OPENAI_MODEL, false);
+    }
+
     if (!get_option(PSA_WC_OPTION_SITE_ID)) {
         update_option(PSA_WC_OPTION_SITE_ID, wp_generate_uuid4(), false);
     }
@@ -173,9 +185,21 @@ function psa_wc_assistant_handle_settings() {
 
     check_admin_referer('psa_wc_assistant_settings');
 
+    $mode = isset($_POST['assistant_mode']) ? sanitize_key(wp_unslash($_POST['assistant_mode'])) : 'direct';
+    $openai_api_key = isset($_POST['openai_api_key']) ? sanitize_text_field(wp_unslash($_POST['openai_api_key'])) : '';
+    $openai_model = isset($_POST['openai_model']) ? sanitize_text_field(wp_unslash($_POST['openai_model'])) : PSA_WC_DEFAULT_OPENAI_MODEL;
     $service_url = isset($_POST['service_url']) ? esc_url_raw(wp_unslash($_POST['service_url'])) : '';
     $site_id = isset($_POST['site_id']) ? sanitize_text_field(wp_unslash($_POST['site_id'])) : '';
     $site_secret = isset($_POST['site_secret']) ? sanitize_text_field(wp_unslash($_POST['site_secret'])) : '';
+
+    update_option(PSA_WC_OPTION_MODE, in_array($mode, array('direct', 'service'), true) ? $mode : 'direct', false);
+    update_option(PSA_WC_OPTION_OPENAI_MODEL, $openai_model !== '' ? $openai_model : PSA_WC_DEFAULT_OPENAI_MODEL, false);
+    if ($openai_api_key !== '') {
+        update_option(PSA_WC_OPTION_OPENAI_API_KEY, $openai_api_key, false);
+    }
+    if (isset($_POST['clear_openai_api_key']) && $_POST['clear_openai_api_key'] === '1') {
+        delete_option(PSA_WC_OPTION_OPENAI_API_KEY);
+    }
 
     update_option(PSA_WC_OPTION_SERVICE_URL, untrailingslashit($service_url), false);
     if ($site_id !== '') {
@@ -197,6 +221,9 @@ function psa_wc_assistant_render_admin_page() {
 
     $service_url = get_option(PSA_WC_OPTION_SERVICE_URL, '');
     $site_id = get_option(PSA_WC_OPTION_SITE_ID, '');
+    $mode = get_option(PSA_WC_OPTION_MODE, 'direct');
+    $openai_model = get_option(PSA_WC_OPTION_OPENAI_MODEL, PSA_WC_DEFAULT_OPENAI_MODEL);
+    $has_openai_key = get_option(PSA_WC_OPTION_OPENAI_API_KEY, '') !== '';
     ?>
     <div class="wrap psa-wc-admin-page">
         <h1><?php echo esc_html__('AI Assistant', 'oninova-personal-assistant'); ?></h1>
@@ -208,20 +235,49 @@ function psa_wc_assistant_render_admin_page() {
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="psa-wc-settings">
             <?php wp_nonce_field('psa_wc_assistant_settings'); ?>
             <input type="hidden" name="action" value="psa_wc_assistant_settings" />
+            <h2><?php echo esc_html__('Easy setup', 'oninova-personal-assistant'); ?></h2>
+            <p><?php echo esc_html__('For most WooCommerce stores, paste an OpenAI API key here and start using the assistant. The key is saved in WordPress options and is not exposed to the assistant chat JavaScript.', 'oninova-personal-assistant'); ?></p>
             <table class="form-table" role="presentation">
                 <tr>
-                    <th scope="row"><label for="psa-service-url"><?php echo esc_html__('Assistant service URL', 'oninova-personal-assistant'); ?></label></th>
-                    <td><input id="psa-service-url" class="regular-text" type="url" name="service_url" value="<?php echo esc_attr($service_url); ?>" placeholder="https://assistant.example.com" /></td>
+                    <th scope="row"><?php echo esc_html__('Assistant mode', 'oninova-personal-assistant'); ?></th>
+                    <td>
+                        <label><input type="radio" name="assistant_mode" value="direct" <?php checked($mode, 'direct'); ?> /> <?php echo esc_html__('Easy: WordPress calls OpenAI directly', 'oninova-personal-assistant'); ?></label><br />
+                        <label><input type="radio" name="assistant_mode" value="service" <?php checked($mode, 'service'); ?> /> <?php echo esc_html__('Advanced: use central assistant service', 'oninova-personal-assistant'); ?></label>
+                    </td>
                 </tr>
                 <tr>
-                    <th scope="row"><label for="psa-site-id"><?php echo esc_html__('Site ID', 'oninova-personal-assistant'); ?></label></th>
-                    <td><input id="psa-site-id" class="regular-text" type="text" name="site_id" value="<?php echo esc_attr($site_id); ?>" /></td>
+                    <th scope="row"><label for="psa-openai-api-key"><?php echo esc_html__('OpenAI API key', 'oninova-personal-assistant'); ?></label></th>
+                    <td>
+                        <input id="psa-openai-api-key" class="regular-text" type="password" name="openai_api_key" value="" placeholder="<?php echo esc_attr($has_openai_key ? __('Key saved. Leave blank to keep current key.', 'oninova-personal-assistant') : __('Paste OpenAI API key', 'oninova-personal-assistant')); ?>" autocomplete="off" />
+                        <?php if ($has_openai_key) : ?>
+                            <label style="display:block;margin-top:8px;"><input type="checkbox" name="clear_openai_api_key" value="1" /> <?php echo esc_html__('Clear saved OpenAI key', 'oninova-personal-assistant'); ?></label>
+                        <?php endif; ?>
+                    </td>
                 </tr>
                 <tr>
-                    <th scope="row"><label for="psa-site-secret"><?php echo esc_html__('Site secret', 'oninova-personal-assistant'); ?></label></th>
-                    <td><input id="psa-site-secret" class="regular-text" type="password" name="site_secret" value="" placeholder="<?php echo esc_attr__('Leave blank to keep current secret', 'oninova-personal-assistant'); ?>" /></td>
+                    <th scope="row"><label for="psa-openai-model"><?php echo esc_html__('OpenAI model', 'oninova-personal-assistant'); ?></label></th>
+                    <td><input id="psa-openai-model" class="regular-text" type="text" name="openai_model" value="<?php echo esc_attr($openai_model); ?>" /></td>
                 </tr>
             </table>
+
+            <div class="psa-wc-service-settings" <?php echo $mode === 'service' ? '' : 'style="display:none;"'; ?>>
+                <h2><?php echo esc_html__('Advanced central service', 'oninova-personal-assistant'); ?></h2>
+                <p><?php echo esc_html__('Use this mode when one assistant service should support many stores or when you do not want OpenAI keys stored in WordPress.', 'oninova-personal-assistant'); ?></p>
+                <table class="form-table" role="presentation">
+                    <tr>
+                        <th scope="row"><label for="psa-service-url"><?php echo esc_html__('Assistant service URL', 'oninova-personal-assistant'); ?></label></th>
+                        <td><input id="psa-service-url" class="regular-text" type="url" name="service_url" value="<?php echo esc_attr($service_url); ?>" placeholder="https://assistant.example.com" /></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="psa-site-id"><?php echo esc_html__('Site ID', 'oninova-personal-assistant'); ?></label></th>
+                        <td><input id="psa-site-id" class="regular-text" type="text" name="site_id" value="<?php echo esc_attr($site_id); ?>" /></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="psa-site-secret"><?php echo esc_html__('Site secret', 'oninova-personal-assistant'); ?></label></th>
+                        <td><input id="psa-site-secret" class="regular-text" type="password" name="site_secret" value="" placeholder="<?php echo esc_attr__('Leave blank to keep current secret', 'oninova-personal-assistant'); ?>" /></td>
+                    </tr>
+                </table>
+            </div>
             <?php submit_button(__('Save assistant settings', 'oninova-personal-assistant')); ?>
         </form>
 
@@ -1184,6 +1240,432 @@ function psa_wc_assistant_call_service($payload) {
     return is_array($decoded) ? $decoded : array();
 }
 
+function psa_wc_assistant_status_payload() {
+    $mode = get_option(PSA_WC_OPTION_MODE, 'direct');
+    $has_openai_key = get_option(PSA_WC_OPTION_OPENAI_API_KEY, '') !== '';
+    $service_url = psa_wc_assistant_service_run_url();
+
+    return array(
+        'enabled' => true,
+        'provider' => $mode === 'service' ? 'assistant_service' : 'openai',
+        'mode' => $mode,
+        'model' => get_option(PSA_WC_OPTION_OPENAI_MODEL, PSA_WC_DEFAULT_OPENAI_MODEL),
+        'configured' => $mode === 'service' ? $service_url !== '' : $has_openai_key,
+        'hasApiKey' => $has_openai_key,
+        'hasServiceUrl' => $service_url !== '',
+    );
+}
+
+function psa_wc_assistant_unavailable_message() {
+    $mode = get_option(PSA_WC_OPTION_MODE, 'direct');
+    if ($mode === 'service') {
+        return 'AI assistant is installed, but the central assistant service URL is not configured yet. Add it in WooCommerce > AI Assistant, then ask again.';
+    }
+
+    return 'AI assistant is installed, but the OpenAI API key is not configured yet. Paste the key in WooCommerce > AI Assistant, save settings, then ask again.';
+}
+
+function psa_wc_assistant_tool_names($tool_definitions) {
+    $names = array();
+    foreach ($tool_definitions as $tool) {
+        if (isset($tool['name'])) {
+            $names[] = $tool['name'];
+        }
+    }
+    return count($names) ? implode(', ', $names) : 'none';
+}
+
+function psa_wc_assistant_format_context($context_documents) {
+    if (!is_array($context_documents) || count($context_documents) === 0) {
+        return 'No generated Markdown context is available yet. Use approved tools when WooCommerce data is needed.';
+    }
+
+    $blocks = array();
+    foreach ($context_documents as $document) {
+        $content = isset($document['content']) ? (string) $document['content'] : '';
+        if (strlen($content) > 4000) {
+            $content = substr($content, 0, 4000) . '...';
+        }
+        $blocks[] = '## ' . $document['title'] . "\nScope: " . $document['scope'] . "\n" . $content;
+    }
+
+    return implode("\n\n---\n\n", $blocks);
+}
+
+function psa_wc_assistant_format_pages($pages) {
+    $lines = array();
+    foreach ($pages as $page) {
+        $details = array();
+        if (!empty($page['description'])) {
+            $details[] = $page['description'];
+        }
+        if (!empty($page['actionTypes'])) {
+            $details[] = 'action types: ' . implode(', ', $page['actionTypes']);
+        }
+        $lines[] = '- ' . $page['id'] . ': ' . $page['label'] . ' -> ' . $page['route'] . (count($details) ? ' (' . implode('; ', $details) . ')' : '');
+    }
+    return count($lines) ? implode("\n", $lines) : '- fallback -> ' . psa_wc_admin_path('admin.php?page=wc-admin');
+}
+
+function psa_wc_assistant_format_write_actions($actions) {
+    $lines = array();
+    foreach ($actions as $action) {
+        $details = array();
+        if (!empty($action['description'])) {
+            $details[] = $action['description'];
+        }
+        if (!empty($action['handlerName'])) {
+            $details[] = 'handler: ' . $action['handlerName'];
+        }
+        if (!empty($action['requiredRoles'])) {
+            $details[] = 'requires: ' . implode(', ', $action['requiredRoles']);
+        }
+        if (!empty($action['payloadSchema'])) {
+            $details[] = 'payload schema: ' . wp_json_encode($action['payloadSchema']);
+        }
+        $lines[] = '- ' . $action['type'] . (count($details) ? ' (' . implode('; ', $details) . ')' : '');
+    }
+    return count($lines) ? implode("\n", $lines) : '- none';
+}
+
+function psa_wc_assistant_build_system_prompt($payload) {
+    $tool_definitions = isset($payload['toolDefinitions']) ? $payload['toolDefinitions'] : array();
+    $page_registry = isset($payload['pageRegistry']) ? $payload['pageRegistry'] : array();
+    $write_actions = isset($payload['writeActions']) ? $payload['writeActions'] : array();
+    $context_documents = isset($payload['contextDocuments']) ? $payload['contextDocuments'] : array();
+    $locale = isset($payload['locale']) ? $payload['locale'] : determine_locale();
+
+    return implode("\n", array(
+        'You are a reusable personal business AI assistant embedded in WordPress WooCommerce wp-admin.',
+        'Your job is to help store owners understand WooCommerce operations quickly and safely.',
+        '',
+        'Operating rules:',
+        '- Answer in the user language when clear; otherwise match the WordPress locale.',
+        '- Be short and straightforward by default: 2-5 concise bullets or short paragraphs.',
+        '- Start with the direct answer or recommendation, then add only the most important supporting numbers.',
+        '- Use generated Markdown context first for stable store orientation.',
+        '- Use approved read-only tools for live WooCommerce numbers, products, orders, and statistics.',
+        '- Never invent WooCommerce values. If a number is unavailable, say what should be checked.',
+        '- Never claim that you changed product data unless a separate user-approved apply action succeeds.',
+        '- Draft actions are suggestions only and always require manual user review.',
+        '- Draft action targetRoute must exactly match one registered wp-admin route below. Do not invent routes, query params, record URLs, or external links.',
+        '- For product price edits, only propose update_woocommerce_product_price when productId, currentPrice, priceField, and currency are known from tools/context.',
+        '- V1 does not support stock writes, order status writes, customer edits, coupon edits, or sale schedules.',
+        '- Do not ask for raw SQL and do not produce SQL for execution.',
+        '',
+        'Application locale: ' . $locale,
+        'Available read-only tools: ' . psa_wc_assistant_tool_names($tool_definitions),
+        '',
+        'Registered pages for draft action links:',
+        psa_wc_assistant_format_pages($page_registry),
+        '',
+        'Approved write-capable draft actions:',
+        psa_wc_assistant_format_write_actions($write_actions),
+        '',
+        'Generated Markdown business context:',
+        psa_wc_assistant_format_context($context_documents),
+    ));
+}
+
+function psa_wc_assistant_openai_output_schema() {
+    return array(
+        'type' => 'object',
+        'additionalProperties' => false,
+        'required' => array('answer', 'citations', 'draftActions'),
+        'properties' => array(
+            'answer' => array('type' => 'string'),
+            'citations' => array(
+                'type' => 'array',
+                'items' => array(
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'required' => array('label', 'scope'),
+                    'properties' => array(
+                        'label' => array('type' => 'string'),
+                        'scope' => array('type' => 'string'),
+                    ),
+                ),
+            ),
+            'draftActions' => array(
+                'type' => 'array',
+                'items' => array(
+                    'type' => 'object',
+                    'additionalProperties' => true,
+                    'required' => array('type', 'title', 'reason', 'targetRoute', 'payload', 'confidence', 'requiresUserReview'),
+                    'properties' => array(
+                        'type' => array('type' => 'string'),
+                        'title' => array('type' => 'string'),
+                        'reason' => array('type' => 'string'),
+                        'targetRoute' => array('type' => 'string'),
+                        'payload' => array('type' => 'object', 'additionalProperties' => true),
+                        'confidence' => array('type' => 'number'),
+                        'requiresUserReview' => array('type' => 'boolean'),
+                    ),
+                ),
+            ),
+        ),
+    );
+}
+
+function psa_wc_assistant_openai_request($body) {
+    $api_key = get_option(PSA_WC_OPTION_OPENAI_API_KEY, '');
+    $response = wp_remote_post('https://api.openai.com/v1/responses', array(
+        'timeout' => 90,
+        'headers' => array(
+            'Authorization' => 'Bearer ' . $api_key,
+            'Content-Type' => 'application/json',
+        ),
+        'body' => wp_json_encode($body),
+    ));
+
+    if (is_wp_error($response)) {
+        return $response;
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    $decoded = json_decode(wp_remote_retrieve_body($response), true);
+    if ($status_code < 200 || $status_code >= 300) {
+        $message = is_array($decoded) && isset($decoded['error']['message'])
+            ? $decoded['error']['message']
+            : 'OpenAI request failed.';
+        return new WP_Error('openai_request_failed', $message, array('status' => $status_code));
+    }
+
+    return is_array($decoded) ? $decoded : array();
+}
+
+function psa_wc_assistant_extract_output_text($response) {
+    if (!empty($response['output_text'])) {
+        return (string) $response['output_text'];
+    }
+
+    foreach ((array) (isset($response['output']) ? $response['output'] : array()) as $item) {
+        if (isset($item['type']) && $item['type'] === 'message') {
+            foreach ((array) (isset($item['content']) ? $item['content'] : array()) as $part) {
+                if (isset($part['text']) && (empty($part['type']) || in_array($part['type'], array('output_text', 'text'), true))) {
+                    return (string) $part['text'];
+                }
+            }
+        }
+    }
+
+    return '';
+}
+
+function psa_wc_assistant_parse_tool_args($arguments) {
+    if (is_array($arguments)) {
+        return $arguments;
+    }
+    $decoded = json_decode((string) $arguments, true);
+    return is_array($decoded) ? $decoded : array();
+}
+
+function psa_wc_assistant_base_openai_body($instructions, $input_items, $tool_definitions) {
+    return array(
+        'model' => get_option(PSA_WC_OPTION_OPENAI_MODEL, PSA_WC_DEFAULT_OPENAI_MODEL),
+        'instructions' => $instructions,
+        'input' => $input_items,
+        'tools' => $tool_definitions,
+        'tool_choice' => 'auto',
+        'parallel_tool_calls' => false,
+        'store' => false,
+        'include' => array('reasoning.encrypted_content'),
+        'max_tool_calls' => 4,
+        'reasoning' => array('effort' => 'low'),
+        'text' => array(
+            'verbosity' => 'low',
+            'format' => array(
+                'type' => 'json_schema',
+                'name' => 'woocommerce_assistant_response',
+                'strict' => false,
+                'schema' => psa_wc_assistant_openai_output_schema(),
+            ),
+        ),
+    );
+}
+
+function psa_wc_assistant_clamp_route($action, $fallback_route) {
+    $pages = psa_wc_assistant_page_registry();
+    $target_route = isset($action['targetRoute']) ? (string) $action['targetRoute'] : '';
+    foreach ($pages as $page) {
+        if ($target_route !== '' && $target_route === $page['route']) {
+            return $page['route'];
+        }
+    }
+
+    $type = isset($action['type']) ? sanitize_key($action['type']) : '';
+    foreach ($pages as $page) {
+        if (!empty($page['actionTypes']) && in_array($type, $page['actionTypes'], true)) {
+            return $page['route'];
+        }
+    }
+
+    return $fallback_route;
+}
+
+function psa_wc_assistant_validate_direct_draft_actions($actions, $fallback_route) {
+    $allowed = array(
+        'open_page',
+        'operational_note',
+        'review_order',
+        'review_report',
+        'review_product',
+        'review_stock',
+        'follow_up_client',
+        'review_customer',
+        'review_coupon',
+        'update_woocommerce_product_price',
+    );
+    $validated = array();
+
+    foreach (array_slice(is_array($actions) ? $actions : array(), 0, 6) as $action) {
+        $title = isset($action['title']) ? sanitize_text_field($action['title']) : '';
+        $reason = isset($action['reason']) ? sanitize_textarea_field($action['reason']) : '';
+        if ($title === '' || $reason === '') {
+            continue;
+        }
+
+        $type = isset($action['type']) ? sanitize_key($action['type']) : 'operational_note';
+        if (!in_array($type, $allowed, true)) {
+            $type = 'operational_note';
+        }
+
+        $normalized = array(
+            'type' => $type,
+            'title' => substr($title, 0, 255),
+            'reason' => substr($reason, 0, 2000),
+            'targetRoute' => psa_wc_assistant_clamp_route($action, $fallback_route),
+            'payload' => isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array(),
+            'confidence' => max(0, min(1, isset($action['confidence']) ? (float) $action['confidence'] : 0)),
+            'requiresUserReview' => true,
+            'status' => 'draft',
+        );
+        $validated[] = $normalized;
+    }
+
+    return $validated;
+}
+
+function psa_wc_assistant_call_openai_direct($payload) {
+    if (get_option(PSA_WC_OPTION_OPENAI_API_KEY, '') === '') {
+        return array(
+            'status' => psa_wc_assistant_status_payload(),
+            'answer' => psa_wc_assistant_unavailable_message(),
+            'citations' => array(),
+            'draftActions' => array(),
+            'toolRuns' => array(),
+        );
+    }
+
+    $instructions = psa_wc_assistant_build_system_prompt($payload);
+    $tool_definitions = isset($payload['toolDefinitions']) ? $payload['toolDefinitions'] : array();
+    $fallback_route = isset($payload['fallbackRoute']) ? $payload['fallbackRoute'] : psa_wc_admin_path('admin.php?page=wc-admin');
+    $input_items = array();
+
+    foreach (array_slice((array) (isset($payload['conversationMessages']) ? $payload['conversationMessages'] : array()), -10) as $message) {
+        if (!empty($message['content'])) {
+            $input_items[] = array(
+                'role' => isset($message['role']) && $message['role'] === 'assistant' ? 'assistant' : 'user',
+                'content' => (string) $message['content'],
+            );
+        }
+    }
+    $input_items[] = array('role' => 'user', 'content' => (string) $payload['message']);
+
+    $tool_runs = array();
+    $response = psa_wc_assistant_openai_request(psa_wc_assistant_base_openai_body($instructions, $input_items, $tool_definitions));
+    if (is_wp_error($response)) {
+        return $response;
+    }
+
+    for ($index = 0; $index < 4; $index++) {
+        $calls = array();
+        foreach ((array) (isset($response['output']) ? $response['output'] : array()) as $item) {
+            if (isset($item['type']) && $item['type'] === 'function_call') {
+                $calls[] = $item;
+            }
+        }
+
+        if (count($calls) === 0) {
+            break;
+        }
+
+        $outputs = array();
+        foreach ($calls as $call) {
+            $started = microtime(true);
+            $tool_name = sanitize_key(isset($call['name']) ? $call['name'] : '');
+            $args = psa_wc_assistant_parse_tool_args(isset($call['arguments']) ? $call['arguments'] : array());
+            $tool_result = psa_wc_assistant_run_tool_by_name($tool_name, $args);
+            $duration_ms = (int) round((microtime(true) - $started) * 1000);
+
+            if (is_wp_error($tool_result)) {
+                $tool_runs[] = array(
+                    'toolName' => $tool_name,
+                    'args' => $args,
+                    'resultSummary' => null,
+                    'status' => 'failed',
+                    'error' => $tool_result->get_error_message(),
+                    'durationMs' => $duration_ms,
+                );
+                $output_data = array('error' => $tool_result->get_error_message());
+            } else {
+                $tool_runs[] = array(
+                    'toolName' => $tool_name,
+                    'args' => $args,
+                    'resultSummary' => isset($tool_result['summary']) ? $tool_result['summary'] : 'WooCommerce data returned',
+                    'status' => 'completed',
+                    'durationMs' => $duration_ms,
+                );
+                $output_data = isset($tool_result['data']) ? $tool_result['data'] : $tool_result;
+            }
+
+            $outputs[] = array(
+                'type' => 'function_call_output',
+                'call_id' => isset($call['call_id']) ? $call['call_id'] : '',
+                'output' => wp_json_encode($output_data),
+            );
+        }
+
+        $input_items = array_merge($input_items, (array) (isset($response['output']) ? $response['output'] : array()), $outputs);
+        $response = psa_wc_assistant_openai_request(psa_wc_assistant_base_openai_body($instructions, $input_items, $tool_definitions));
+        if (is_wp_error($response)) {
+            return $response;
+        }
+    }
+
+    $text = psa_wc_assistant_extract_output_text($response);
+    $parsed = json_decode($text, true);
+    if (!is_array($parsed)) {
+        $parsed = array('answer' => $text !== '' ? $text : 'I could not produce a structured answer. Please try again.', 'citations' => array(), 'draftActions' => array());
+    }
+
+    return array(
+        'status' => psa_wc_assistant_status_payload(),
+        'answer' => isset($parsed['answer']) ? (string) $parsed['answer'] : '',
+        'citations' => isset($parsed['citations']) && is_array($parsed['citations']) ? $parsed['citations'] : array(),
+        'draftActions' => psa_wc_assistant_validate_direct_draft_actions(isset($parsed['draftActions']) ? $parsed['draftActions'] : array(), $fallback_route),
+        'toolRuns' => $tool_runs,
+        'providerResponseId' => isset($response['id']) ? $response['id'] : null,
+    );
+}
+
+function psa_wc_assistant_call_ai($payload) {
+    if (get_option(PSA_WC_OPTION_MODE, 'direct') === 'service') {
+        if (psa_wc_assistant_service_run_url() === '') {
+            return array(
+                'status' => psa_wc_assistant_status_payload(),
+                'answer' => psa_wc_assistant_unavailable_message(),
+                'citations' => array(),
+                'draftActions' => array(),
+                'toolRuns' => array(),
+            );
+        }
+        return psa_wc_assistant_call_service($payload);
+    }
+
+    return psa_wc_assistant_call_openai_direct($payload);
+}
+
 function psa_wc_assistant_verify_service_signature($request) {
     $site_id = $request->get_header('x-oninova-assistant-site');
     $timestamp = $request->get_header('x-oninova-assistant-timestamp');
@@ -1251,7 +1733,7 @@ function psa_wc_assistant_rest_chat($request) {
         return (int) $saved_message['id'] !== (int) $user_message['id'];
     });
 
-    $service_response = psa_wc_assistant_call_service(array(
+    $service_response = psa_wc_assistant_call_ai(array(
         'site' => psa_wc_assistant_site_payload(),
         'message' => $message,
         'conversationMessages' => array_values($history),
@@ -1317,6 +1799,7 @@ function psa_wc_assistant_rest_conversation($request) {
 
 function psa_wc_assistant_rest_context() {
     return rest_ensure_response(array(
+        'status' => psa_wc_assistant_status_payload(),
         'documents' => psa_wc_assistant_list_context_documents(false),
         'site' => psa_wc_assistant_site_payload(),
     ));
@@ -1324,6 +1807,7 @@ function psa_wc_assistant_rest_context() {
 
 function psa_wc_assistant_rest_context_refresh() {
     return rest_ensure_response(array(
+        'status' => psa_wc_assistant_status_payload(),
         'documents' => psa_wc_assistant_refresh_context_documents(),
         'site' => psa_wc_assistant_site_payload(),
     ));

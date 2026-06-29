@@ -269,5 +269,22 @@
     });
   }
 
+  function bindSettingsMode() {
+    const settings = document.querySelector('.psa-wc-settings');
+    const serviceSettings = document.querySelector('.psa-wc-service-settings');
+    if (!settings || !serviceSettings) return;
+
+    function updateVisibility() {
+      const selected = settings.querySelector('input[name="assistant_mode"]:checked');
+      serviceSettings.style.display = selected && selected.value === 'service' ? '' : 'none';
+    }
+
+    settings.querySelectorAll('input[name="assistant_mode"]').forEach(function (input) {
+      input.addEventListener('change', updateVisibility);
+    });
+    updateVisibility();
+  }
+
+  bindSettingsMode();
   render();
 }());

@@ -41,11 +41,13 @@ The model never executes raw SQL. It can only call tools exposed by the host ada
 
 ## WooCommerce Integration
 
-WooCommerce uses a WordPress plugin plus a central Node assistant service:
+WooCommerce supports two install modes:
+
+- Easy mode: the WordPress plugin calls OpenAI directly after the store manager pastes an API key in **WooCommerce > AI Assistant**.
+- Advanced mode: the WordPress plugin calls a central Node assistant service for multi-site deployments or when you do not want OpenAI keys stored in WordPress.
 
 - WordPress stores assistant conversations, messages, context documents, draft actions, and tool runs in custom `{prefix}psa_assistant_*` tables.
 - WordPress exposes `/wp-json/oninova-assistant/v1/*` endpoints for the admin drawer and signed tool callbacks.
-- The central Node service owns `OPENAI_API_KEY` and mounts `POST /v1/woocommerce/run`.
 - WooCommerce data access stays inside the plugin through WooCommerce/WordPress APIs.
 - V1 write support is limited to reviewed `regular_price` and `sale_price` updates for simple products and variations.
 
