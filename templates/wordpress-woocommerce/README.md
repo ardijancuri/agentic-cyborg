@@ -16,6 +16,26 @@ The plugin stores assistant state in WordPress custom tables and calls a central
 
 ## Central Service
 
+For local testing, copy:
+
+```text
+templates/wordpress-woocommerce/.env.local.example
+```
+
+to:
+
+```text
+templates/wordpress-woocommerce/.env.local
+```
+
+Then fill in `OPENAI_API_KEY`, `WOO_ASSISTANT_SITE_ID`, and `WOO_ASSISTANT_SITE_SECRET`.
+
+Start the local service:
+
+```bash
+npm run woo:service
+```
+
 Mount the package router in a Node/Express service:
 
 ```js
