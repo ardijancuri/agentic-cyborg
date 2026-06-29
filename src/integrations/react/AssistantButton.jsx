@@ -65,7 +65,52 @@ function MessageBubble({ message }) {
   );
 }
 
-const defaultWriteActionTypes = ['update_product_price', 'update_woocommerce_product_price'];
+const defaultWriteActionTypes = [
+  'update_product_price',
+  'bulk_update_product_prices',
+  'update_woocommerce_product_price',
+  'bulk_update_woocommerce_product_prices',
+];
+
+const formatProductTarget = (item = {}) => {
+  const parts = [];
+  if (item.productId || item.stockItemId || item.id) {
+    parts.push(`Product ${item.productId || item.stockItemId || item.id}`);
+  }
+  if (item.variationId) {
+    parts.push(`variation ${item.variationId}`);
+  }
+  if (item.priceField) {
+    parts.push(item.priceField);
+  }
+  if (item.newPrice !== undefined && item.newPrice !== null) {
+    parts.push(`to ${item.newPrice}`);
+  }
+  return parts.join(' - ');
+};
+
+const summarizePricePayload = (action) => {
+  const payload = action?.payload || {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+
+  if (items.length > 0) {
+    const preview = items.slice(0, 5).map(formatProductTarget).filter(Boolean);
+    return [
+      `${items.length} product${items.length === 1 ? '' : 's'} selected`,
+      payload.priceField ? `Field: ${payload.priceField}` : '',
+      payload.currency ? `Currency: ${payload.currency}` : '',
+      ...preview,
+      items.length > preview.length ? `+${items.length - preview.length} more` : '',
+    ].filter(Boolean);
+  }
+
+  const single = formatProductTarget(payload);
+  return [
+    single,
+    payload.currentPrice !== undefined && payload.currentPrice !== null ? `Current: ${payload.currentPrice}` : '',
+    payload.currency ? `Currency: ${payload.currency}` : '',
+  ].filter(Boolean);
+};
 
 function DraftActionCard({
   action,
@@ -80,6 +125,7 @@ function DraftActionCard({
   const isClosed = status === 'applied' || status === 'rejected';
   const canShowControls = isWriteAction && !isClosed;
   const statusLabel = labels[status] || status;
+  const payloadSummary = isWriteAction ? summarizePricePayload(action) : [];
 
   return (
     <div className="psa-draft-card">
@@ -93,6 +139,13 @@ function DraftActionCard({
           <span className="psa-confidence">{Math.round((action.confidence || 0) * 100)}%</span>
         </div>
       </div>
+      {payloadSummary.length > 0 && (
+        <ul className="psa-draft-payload">
+          {payloadSummary.map((line, index) => (
+            <li key={`${line}-${index}`}>{line}</li>
+          ))}
+        </ul>
+      )}
       {action.targetRoute && (
         <a className="psa-link" href={action.targetRoute}>
           {labels.open}

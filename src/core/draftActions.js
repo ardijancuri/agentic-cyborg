@@ -9,7 +9,9 @@ const DEFAULT_DRAFT_TYPES = new Set([
   'review_purchase',
   'review_report',
   'update_product_price',
+  'bulk_update_product_prices',
   'update_woocommerce_product_price',
+  'bulk_update_woocommerce_product_prices',
   'operational_note',
 ]);
 

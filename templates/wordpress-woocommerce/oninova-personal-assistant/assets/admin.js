@@ -1,6 +1,6 @@
 (function () {
   const config = window.PsaAssistantConfig || {};
-  const writeActionTypes = new Set(['update_woocommerce_product_price']);
+  const writeActionTypes = new Set(['update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices']);
   const closedStatuses = new Set(['applied', 'rejected']);
 
   const state = {
@@ -299,6 +299,42 @@
     ].join('');
   }
 
+  function formatPriceTarget(item) {
+    const parts = [];
+    if (item.productId) parts.push('Product ' + item.productId);
+    if (item.variationId) parts.push('variation ' + item.variationId);
+    if (item.priceField) parts.push(item.priceField);
+    if (item.newPrice !== undefined && item.newPrice !== null) parts.push('to ' + item.newPrice);
+    return parts.join(' - ');
+  }
+
+  function renderPayloadSummary(action) {
+    const payload = action.payload || {};
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const lines = [];
+
+    if (items.length) {
+      lines.push(items.length + ' product' + (items.length === 1 ? '' : 's') + ' selected');
+      if (payload.priceField) lines.push('Field: ' + payload.priceField);
+      if (payload.currency) lines.push('Currency: ' + payload.currency);
+      items.slice(0, 5).forEach(function (item) {
+        const line = formatPriceTarget(item);
+        if (line) lines.push(line);
+      });
+      if (items.length > 5) lines.push('+' + (items.length - 5) + ' more');
+    } else {
+      const line = formatPriceTarget(payload);
+      if (line) lines.push(line);
+      if (payload.currentPrice !== undefined && payload.currentPrice !== null) lines.push('Current: ' + payload.currentPrice);
+      if (payload.currency) lines.push('Currency: ' + payload.currency);
+    }
+
+    if (!lines.length) return '';
+    return '<ul class="psa-wc-draft-payload">' + lines.map(function (line) {
+      return '<li>' + escapeHtml(line) + '</li>';
+    }).join('') + '</ul>';
+  }
+
   function renderDraft(action) {
     const status = action.status || 'draft';
     const isWriteAction = writeActionTypes.has(action.type);
@@ -314,6 +350,7 @@
       isWriteAction ? '<span class="psa-wc-badge psa-wc-status-' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' : '',
       '<br><span class="psa-wc-badge">', Math.round((action.confidence || 0) * 100), '%</span>',
       '</div></div>',
+      isWriteAction ? renderPayloadSummary(action) : '',
       action.targetRoute ? '<a class="psa-wc-link" href="' + escapeHtml(action.targetRoute) + '">Open</a>' : '',
       showActions ? [
         '<div class="psa-wc-draft-actions">',

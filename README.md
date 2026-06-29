@@ -49,7 +49,7 @@ WooCommerce supports two install modes:
 - WordPress stores assistant conversations, messages, context documents, draft actions, and tool runs in custom `{prefix}psa_assistant_*` tables.
 - WordPress exposes `/wp-json/oninova-assistant/v1/*` endpoints for the admin drawer and signed tool callbacks.
 - WooCommerce data access stays inside the plugin through WooCommerce/WordPress APIs.
-- V1 write support is limited to reviewed `regular_price` and `sale_price` updates for simple products and variations.
+- V1 write support is limited to reviewed single or bulk `regular_price` and `sale_price` updates for simple products and variations.
 
 Plugin template:
 
@@ -202,11 +202,25 @@ const writeActionRegistry = createWriteActionRegistry({
         // then audit old price/new price/user/draft action id in the host application.
       },
     },
+    {
+      type: 'bulk_update_product_prices',
+      handlerName: 'bulk_update_product_prices',
+      description: 'Update approved price fields for an explicit, bounded list of products after full_admin approval.',
+      requiredRoles: ['full_admin'],
+      payloadSchema: {
+        type: 'object',
+        required: ['items', 'currency', 'reason'],
+      },
+      apply: async ({ action, user, requestContext }) => {
+        // Validate every listed item, check stale current prices, update only approved price columns
+        // in a transaction, then audit the full before/after result.
+      },
+    },
   ],
 });
 ```
 
-The assistant may propose `update_product_price`, but it must stay `requiresUserReview: true`. The backend stores it as `draft`; only `POST /api/assistant/draft-actions/:id/apply` can mark it `applied`.
+The assistant may propose `update_product_price` or `bulk_update_product_prices`, but they must stay `requiresUserReview: true`. The backend stores them as `draft`; only `POST /api/assistant/draft-actions/:id/apply` can mark them `applied`.
 
 ## Environment Variables
 

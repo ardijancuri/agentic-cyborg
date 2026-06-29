@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oninova Personal Assistant for WooCommerce
  * Description: Adds an approved AI assistant drawer for WooCommerce store operations.
- * Version: 0.1.1
+ * Version: 0.1.2
  * Author: Oninova
  * Requires Plugins: woocommerce
  */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('PSA_WC_ASSISTANT_VERSION', '0.1.1');
+define('PSA_WC_ASSISTANT_VERSION', '0.1.2');
 define('PSA_WC_ASSISTANT_REST_NAMESPACE', 'oninova-assistant/v1');
 define('PSA_WC_OPTION_MODE', 'psa_wc_assistant_mode');
 define('PSA_WC_OPTION_OPENAI_API_KEY', 'psa_wc_assistant_openai_api_key');
@@ -499,7 +499,7 @@ function psa_wc_assistant_page_registry() {
             'label' => 'Products',
             'route' => psa_wc_admin_path('edit.php?post_type=product'),
             'description' => 'WooCommerce products, variations, prices, and stock.',
-            'actionTypes' => array('review_product', 'review_stock', 'update_woocommerce_product_price'),
+            'actionTypes' => array('review_product', 'review_stock', 'update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices'),
             'keywords' => array('product', 'products', 'stock', 'inventory', 'price'),
         ),
         array(
@@ -555,6 +555,40 @@ function psa_wc_assistant_write_actions() {
                     'newPrice' => array('type' => 'string'),
                     'currency' => array('type' => 'string'),
                     'reason' => array('type' => 'string'),
+                ),
+                'additionalProperties' => false,
+            ),
+        ),
+        array(
+            'type' => 'bulk_update_woocommerce_product_prices',
+            'handlerName' => 'bulk_update_woocommerce_product_prices',
+            'title' => 'Bulk update WooCommerce product prices',
+            'description' => 'Update regular_price or sale_price for a bounded list of simple products or variations after WooCommerce manager approval.',
+            'requiredRoles' => array('manage_woocommerce'),
+            'payloadSchema' => array(
+                'type' => 'object',
+                'required' => array('items', 'currency', 'reason'),
+                'properties' => array(
+                    'priceField' => array('type' => 'string', 'enum' => array('regular_price', 'sale_price')),
+                    'currency' => array('type' => 'string'),
+                    'reason' => array('type' => 'string'),
+                    'items' => array(
+                        'type' => 'array',
+                        'minItems' => 1,
+                        'maxItems' => 50,
+                        'items' => array(
+                            'type' => 'object',
+                            'required' => array('productId', 'currentPrice', 'newPrice'),
+                            'properties' => array(
+                                'productId' => array('type' => 'integer'),
+                                'variationId' => array('type' => array('integer', 'null')),
+                                'priceField' => array('type' => 'string', 'enum' => array('regular_price', 'sale_price')),
+                                'currentPrice' => array('type' => 'string'),
+                                'newPrice' => array('type' => 'string'),
+                            ),
+                            'additionalProperties' => false,
+                        ),
+                    ),
                 ),
                 'additionalProperties' => false,
             ),
@@ -1349,7 +1383,8 @@ function psa_wc_assistant_build_system_prompt($payload) {
         '- Never claim that you changed product data unless a separate user-approved apply action succeeds.',
         '- Draft actions are suggestions only and always require manual user review.',
         '- Draft action targetRoute must exactly match one registered wp-admin route below. Do not invent routes, query params, record URLs, or external links.',
-        '- For product price edits, only propose update_woocommerce_product_price when productId, currentPrice, priceField, and currency are known from tools/context.',
+        '- For one product price edit, propose update_woocommerce_product_price only when productId, currentPrice, priceField, and currency are known from tools/context.',
+        '- For bulk product price edits, propose bulk_update_woocommerce_product_prices only when every affected product or variation is explicitly listed with productId, currentPrice, newPrice, currency, and priceField. Do not draft open-ended category-wide writes.',
         '- V1 does not support stock writes, order status writes, customer edits, coupon edits, or sale schedules.',
         '- Do not ask for raw SQL and do not produce SQL for execution.',
         '',
@@ -1515,6 +1550,7 @@ function psa_wc_assistant_validate_direct_draft_actions($actions, $fallback_rout
         'review_customer',
         'review_coupon',
         'update_woocommerce_product_price',
+        'bulk_update_woocommerce_product_prices',
     );
     $validated = array();
 
@@ -1813,15 +1849,34 @@ function psa_wc_assistant_rest_context_refresh() {
     ));
 }
 
-function psa_wc_assistant_apply_price_action($action) {
-    $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
-    $product_id = isset($payload['productId']) ? absint($payload['productId']) : 0;
-    $variation_id = isset($payload['variationId']) ? absint($payload['variationId']) : 0;
-    $price_field = isset($payload['priceField']) ? sanitize_key($payload['priceField']) : '';
-    $currency = isset($payload['currency']) ? sanitize_text_field($payload['currency']) : '';
+function psa_wc_assistant_prices_match($current_price, $expected_price) {
+    $current = $current_price === '' ? '' : wc_format_decimal($current_price);
+    $expected = $expected_price === '' ? '' : wc_format_decimal($expected_price);
+
+    if ($current === '' || $expected === '') {
+        return $current === $expected;
+    }
+
+    return abs((float) $current - (float) $expected) <= 0.00001;
+}
+
+function psa_wc_assistant_prepare_price_update($item, $defaults = array()) {
+    $item = is_array($item) ? $item : array();
+    $product_id = isset($item['productId']) ? absint($item['productId']) : 0;
+    $variation_id = isset($item['variationId']) ? absint($item['variationId']) : 0;
+    $price_field = isset($item['priceField']) && $item['priceField'] !== ''
+        ? sanitize_key($item['priceField'])
+        : sanitize_key(isset($defaults['priceField']) ? $defaults['priceField'] : '');
+    $currency = isset($item['currency']) && $item['currency'] !== ''
+        ? sanitize_text_field($item['currency'])
+        : sanitize_text_field(isset($defaults['currency']) ? $defaults['currency'] : '');
 
     if (!$product_id || !in_array($price_field, array('regular_price', 'sale_price'), true)) {
         return new WP_Error('invalid_price_action', 'Invalid product price action payload.', array('status' => 400));
+    }
+
+    if (!array_key_exists('currentPrice', $item) || !array_key_exists('newPrice', $item)) {
+        return new WP_Error('invalid_price_action', 'Price action requires currentPrice and newPrice for every product.', array('status' => 400));
     }
 
     if ($currency && function_exists('get_woocommerce_currency') && $currency !== get_woocommerce_currency()) {
@@ -1843,14 +1898,14 @@ function psa_wc_assistant_apply_price_action($action) {
     }
 
     $current_price = $price_field === 'regular_price' ? $product->get_regular_price('edit') : $product->get_sale_price('edit');
-    $expected_price = isset($payload['currentPrice']) ? wc_format_decimal($payload['currentPrice']) : '';
-    $new_price = isset($payload['newPrice']) ? wc_format_decimal($payload['newPrice']) : '';
+    $expected_price = (string) $item['currentPrice'];
+    $new_price = wc_format_decimal($item['newPrice']);
 
     if ($new_price === '' || (float) $new_price <= 0) {
         return new WP_Error('invalid_new_price', 'New price must be greater than 0.', array('status' => 400));
     }
 
-    if (abs((float) $current_price - (float) $expected_price) > 0.00001) {
+    if (!psa_wc_assistant_prices_match((string) $current_price, $expected_price)) {
         return new WP_Error('stale_price', 'Product price changed since this action was drafted.', array('status' => 409));
     }
 
@@ -1859,20 +1914,87 @@ function psa_wc_assistant_apply_price_action($action) {
         if ($regular_price !== '' && (float) $new_price > (float) $regular_price) {
             return new WP_Error('invalid_sale_price', 'Sale price cannot be greater than the regular price.', array('status' => 400));
         }
-        $product->set_sale_price($new_price);
+    }
+
+    return array(
+        'product' => $product,
+        'result' => array(
+            'productId' => $product_id,
+            'variationId' => $variation_id ? $variation_id : null,
+            'targetId' => $target_id,
+            'priceField' => $price_field,
+            'oldPrice' => (string) $current_price,
+            'newPrice' => (string) $new_price,
+            'currency' => function_exists('get_woocommerce_currency') ? get_woocommerce_currency() : $currency,
+        ),
+    );
+}
+
+function psa_wc_assistant_save_prepared_price_update($prepared) {
+    $product = $prepared['product'];
+    $result = $prepared['result'];
+
+    if ($result['priceField'] === 'sale_price') {
+        $product->set_sale_price($result['newPrice']);
     } else {
-        $product->set_regular_price($new_price);
+        $product->set_regular_price($result['newPrice']);
     }
 
     $product->save();
+    return $result;
+}
+
+function psa_wc_assistant_apply_price_action($action) {
+    $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
+    $prepared = psa_wc_assistant_prepare_price_update($payload, array());
+    if (is_wp_error($prepared)) {
+        return $prepared;
+    }
+
+    return psa_wc_assistant_save_prepared_price_update($prepared);
+}
+
+function psa_wc_assistant_apply_bulk_price_action($action) {
+    $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
+    $items = isset($payload['items']) && is_array($payload['items']) ? $payload['items'] : array();
+    $count = count($items);
+
+    if ($count < 1 || $count > 50) {
+        return new WP_Error('invalid_bulk_price_action', 'Bulk price actions must contain 1 to 50 products.', array('status' => 400));
+    }
+
+    $defaults = array(
+        'priceField' => isset($payload['priceField']) ? sanitize_key($payload['priceField']) : '',
+        'currency' => isset($payload['currency']) ? sanitize_text_field($payload['currency']) : '',
+    );
+    $seen = array();
+    $prepared_updates = array();
+
+    foreach ($items as $item) {
+        $prepared = psa_wc_assistant_prepare_price_update($item, $defaults);
+        if (is_wp_error($prepared)) {
+            return $prepared;
+        }
+
+        $key = $prepared['result']['targetId'] . ':' . $prepared['result']['priceField'];
+        if (isset($seen[$key])) {
+            return new WP_Error('duplicate_price_action_item', 'Bulk price action contains the same product price field more than once.', array('status' => 400));
+        }
+
+        $seen[$key] = true;
+        $prepared_updates[] = $prepared;
+    }
+
+    $results = array();
+    foreach ($prepared_updates as $prepared) {
+        $results[] = psa_wc_assistant_save_prepared_price_update($prepared);
+    }
 
     return array(
-        'productId' => $product_id,
-        'variationId' => $variation_id ? $variation_id : null,
-        'priceField' => $price_field,
-        'oldPrice' => (string) $current_price,
-        'newPrice' => (string) $new_price,
-        'currency' => function_exists('get_woocommerce_currency') ? get_woocommerce_currency() : $currency,
+        'updatedCount' => count($results),
+        'items' => $results,
+        'currency' => function_exists('get_woocommerce_currency') ? get_woocommerce_currency() : $defaults['currency'],
+        'reason' => isset($payload['reason']) ? sanitize_textarea_field($payload['reason']) : '',
     );
 }
 
@@ -1886,11 +2008,13 @@ function psa_wc_assistant_rest_apply_draft_action($request) {
         return new WP_Error('invalid_draft_action_status', 'Draft action cannot be applied from this status.', array('status' => 409));
     }
 
-    if ($action['type'] !== 'update_woocommerce_product_price') {
+    if (!in_array($action['type'], array('update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices'), true)) {
         return new WP_Error('unsupported_write_action', 'Unsupported assistant write action.', array('status' => 400));
     }
 
-    $result = psa_wc_assistant_apply_price_action($action);
+    $result = $action['type'] === 'bulk_update_woocommerce_product_prices'
+        ? psa_wc_assistant_apply_bulk_price_action($action)
+        : psa_wc_assistant_apply_price_action($action);
     if (is_wp_error($result)) {
         $error_data = $result->get_error_data();
         $error_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;

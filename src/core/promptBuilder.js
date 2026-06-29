@@ -49,6 +49,8 @@ export const buildSystemPrompt = ({
     '- Draft actions are suggestions only and always require manual user review.',
     '- Draft action targetRoute must exactly match one registered page route below. Do not invent routes, query params, record URLs, or external links.',
     '- Write-capable draft actions must include the exact payload needed for review and must keep requiresUserReview true.',
+    '- Bulk price draft actions are allowed only when every affected product is explicitly listed with its id, current price, new price, currency, and target price field. Do not create open-ended category-wide writes.',
+    '- If the user asks for a broad category/group price edit, use approved read-only tools to identify a bounded product list first, then draft one reviewed bulk action for those exact items.',
     '- Do not ask for raw SQL and do not produce SQL for execution.',
     ...extraInstructions.map((instruction) => `- ${instruction}`),
     '',

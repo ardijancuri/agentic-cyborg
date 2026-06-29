@@ -111,6 +111,7 @@ export class WooCommerceAssistantRunner {
       extraInstructions: [
         'This host is WordPress WooCommerce running inside wp-admin.',
         'For price changes, only propose update_woocommerce_product_price draft actions when the product or variation id and current price are known from tools/context.',
+        'For bulk price changes, propose bulk_update_woocommerce_product_prices only after every affected product or variation is listed with productId, currentPrice, newPrice, currency, and priceField. Keep bulk drafts bounded and review-required.',
         'Never propose stock, order status, customer, coupon, or sale schedule writes in WooCommerce V1.',
       ],
       pageRegistry,

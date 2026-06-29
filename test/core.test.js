@@ -43,7 +43,7 @@ const TEST_PAGE_REGISTRY = [
     id: 'wc_products',
     label: 'WooCommerce Products',
     route: '/wp-admin/edit.php?post_type=product',
-    actionTypes: ['update_woocommerce_product_price'],
+    actionTypes: ['update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices'],
     keywords: ['product', 'price'],
   },
 ];
@@ -192,6 +192,61 @@ test('woocommerce draft actions keep registered wp-admin query routes', () => {
   assert.equal(actions[0].type, 'update_woocommerce_product_price');
   assert.equal(actions[0].targetRoute, '/wp-admin/edit.php?post_type=product');
   assert.equal(actions[0].status, 'draft');
+});
+
+test('bulk product price draft actions are review-only and route-clamped', () => {
+  const actions = validateDraftActions([
+    {
+      type: 'bulk_update_woocommerce_product_prices',
+      title: 'Bulk update sale prices',
+      reason: 'The owner requested a reviewed sale price update for selected products.',
+      targetRoute: '/invented-products',
+      payload: {
+        priceField: 'sale_price',
+        currency: 'EUR',
+        reason: 'Seasonal sale',
+        items: [
+          { productId: 10, variationId: null, currentPrice: '', newPrice: '80.00' },
+          { productId: 11, variationId: 21, currentPrice: '90.00', newPrice: '70.00' },
+        ],
+      },
+      confidence: 0.88,
+      requiresUserReview: false,
+      status: 'applied',
+    },
+    {
+      type: 'bulk_update_product_prices',
+      title: 'Bulk update CRM prices',
+      reason: 'The owner requested reviewed stock item price updates.',
+      targetRoute: '/missing-stock',
+      payload: {
+        currency: 'MKD',
+        items: [{ stockItemId: 'stock-1', currentPrice: 100, newPrice: 120 }],
+      },
+      confidence: 0.8,
+    },
+  ], {
+    pageRegistry: [
+      ...TEST_PAGE_REGISTRY,
+      {
+        id: 'stock_bulk',
+        label: 'Stock',
+        route: '/stock',
+        actionTypes: ['bulk_update_product_prices'],
+        keywords: ['stock'],
+      },
+    ],
+    fallbackRoute: '/dashboard',
+  });
+
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0].type, 'bulk_update_woocommerce_product_prices');
+  assert.equal(actions[0].targetRoute, '/wp-admin/edit.php?post_type=product');
+  assert.equal(actions[0].requiresUserReview, true);
+  assert.equal(actions[0].status, 'draft');
+  assert.equal(actions[0].payload.items.length, 2);
+  assert.equal(actions[1].type, 'bulk_update_product_prices');
+  assert.equal(actions[1].targetRoute, '/stock');
 });
 
 test('read-only tool registry exposes only named tools and passes context', async () => {
@@ -609,6 +664,7 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
     async generate(input) {
       assert.equal(this.toolRegistry.hasTool('find_products'), true);
       assert.equal(input.writeActions[0].type, 'update_woocommerce_product_price');
+      assert.equal(input.writeActions[1].type, 'bulk_update_woocommerce_product_prices');
       assert.equal(input.pageRegistry[0].route, '/wp-admin/edit.php?post_type=product');
       return {
         answer: 'Done',
@@ -648,7 +704,10 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
       toolsRunUrl: 'https://store.example/wp-json/oninova-assistant/v1/tools/run',
       siteId: 'site-1',
     },
-    writeActions: [{ type: 'update_woocommerce_product_price' }],
+    writeActions: [
+      { type: 'update_woocommerce_product_price' },
+      { type: 'bulk_update_woocommerce_product_prices' },
+    ],
     pageRegistry: [{ id: 'products', route: '/wp-admin/edit.php?post_type=product' }],
   });
 

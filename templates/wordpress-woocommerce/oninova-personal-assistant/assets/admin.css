@@ -254,6 +254,15 @@
   font-size: 12px;
 }
 
+.psa-wc-draft-payload {
+  display: grid;
+  gap: 3px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #50575e;
+  font-size: 12px;
+}
+
 .psa-wc-badge {
   display: inline-flex;
   align-items: center;
