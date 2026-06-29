@@ -35,6 +35,44 @@ const defaultStarterMessages = [
   'What should the owner review today?',
 ];
 
+const defaultSessionMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
+
+const canUseStorage = () => typeof window !== 'undefined' && window.localStorage;
+
+const readStoredSession = (storageKey, maxAgeMs) => {
+  if (!storageKey || !canUseStorage()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || 'null');
+    if (!parsed?.savedAt || Date.now() - parsed.savedAt > maxAgeMs) {
+      window.localStorage.removeItem(storageKey);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const writeStoredSession = (storageKey, session) => {
+  if (!storageKey || !canUseStorage()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      conversationId: session.conversationId || null,
+      messages: (session.messages || []).slice(-12),
+      draftActions: (session.draftActions || []).slice(0, 12),
+      savedAt: Date.now(),
+    }));
+  } catch {
+    // Ignore quota/private-mode failures; server-side conversation history remains authoritative.
+  }
+};
+
 const formatFreshness = (value) => {
   if (!value) {
     return defaultLabels.noContext;
@@ -69,9 +107,15 @@ const defaultWriteActionTypes = [
   'update_product_price',
   'bulk_update_product_prices',
   'bulk_update_product_prices_by_category',
+  'update_product_details',
+  'bulk_update_product_details',
+  'bulk_update_product_details_by_category',
   'update_woocommerce_product_price',
   'bulk_update_woocommerce_product_prices',
   'bulk_update_woocommerce_category_product_prices',
+  'update_woocommerce_product_details',
+  'bulk_update_woocommerce_product_details',
+  'bulk_update_woocommerce_category_product_details',
 ];
 
 const formatProductTarget = (item = {}) => {
@@ -95,12 +139,14 @@ const summarizePricePayload = (action) => {
   const payload = action?.payload || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
   const category = payload.categoryName || payload.categorySlug || payload.categoryId;
+  const fields = payload.fields && typeof payload.fields === 'object' ? Object.keys(payload.fields) : [];
 
   if (category) {
     return [
       `Category: ${category}`,
       payload.priceField ? `Field: ${payload.priceField}` : '',
       payload.operation ? `Operation: ${payload.operation}` : '',
+      fields.length ? `Product fields: ${fields.join(', ')}` : '',
       payload.newPrice !== undefined && payload.newPrice !== null && payload.newPrice !== '' ? `New price: ${payload.newPrice}` : '',
       payload.percent !== undefined && payload.percent !== null && payload.percent !== '' ? `Percent: ${payload.percent}%` : '',
       payload.currency ? `Currency: ${payload.currency}` : '',
@@ -110,9 +156,14 @@ const summarizePricePayload = (action) => {
 
   if (items.length > 0) {
     const preview = items.slice(0, 5).map(formatProductTarget).filter(Boolean);
+    const itemFields = items.flatMap((item) => (
+      item.fields && typeof item.fields === 'object' ? Object.keys(item.fields) : []
+    ));
+    const uniqueFields = [...new Set(itemFields)];
     return [
       `${items.length} product${items.length === 1 ? '' : 's'} selected`,
       payload.priceField ? `Field: ${payload.priceField}` : '',
+      uniqueFields.length ? `Product fields: ${uniqueFields.join(', ')}` : '',
       payload.currency ? `Currency: ${payload.currency}` : '',
       ...preview,
       items.length > preview.length ? `+${items.length - preview.length} more` : '',
@@ -122,6 +173,7 @@ const summarizePricePayload = (action) => {
   const single = formatProductTarget(payload);
   return [
     single,
+    fields.length ? `Product fields: ${fields.join(', ')}` : '',
     payload.currentPrice !== undefined && payload.currentPrice !== null ? `Current: ${payload.currentPrice}` : '',
     payload.currency ? `Currency: ${payload.currency}` : '',
   ].filter(Boolean);
@@ -199,20 +251,25 @@ export default function AssistantButton({
   labels: providedLabels,
   starterMessages = defaultStarterMessages,
   writeActionTypes = defaultWriteActionTypes,
+  persistSession = true,
+  storageKey = 'psa-assistant-session-v1',
+  sessionMaxAgeMs = defaultSessionMaxAgeMs,
   onDraftActionApplied,
   onDraftActionRejected,
 }) {
   const labels = mergeLabels(providedLabels);
+  const storedSession = persistSession ? readStoredSession(storageKey, sessionMaxAgeMs) : null;
   const [isOpen, setIsOpen] = useState(false);
   const [contextState, setContextState] = useState(null);
-  const [conversationId, setConversationId] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [draftActions, setDraftActions] = useState([]);
+  const [conversationId, setConversationId] = useState(storedSession?.conversationId || null);
+  const [messages, setMessages] = useState(storedSession?.messages || []);
+  const [draftActions, setDraftActions] = useState(storedSession?.draftActions || []);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [actionBusy, setActionBusy] = useState({});
+  const [conversationLoaded, setConversationLoaded] = useState(false);
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -242,6 +299,44 @@ export default function AssistantButton({
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, draftActions, loading]);
+
+  useEffect(() => {
+    if (!persistSession) {
+      return;
+    }
+    writeStoredSession(storageKey, { conversationId, messages, draftActions });
+  }, [conversationId, draftActions, messages, persistSession, storageKey]);
+
+  useEffect(() => {
+    if (!conversationId || conversationLoaded || !api?.getConversation) {
+      return;
+    }
+
+    let mounted = true;
+    api.getConversation(conversationId)
+      .then((data) => {
+        if (!mounted) {
+          return;
+        }
+        const loadedMessages = Array.isArray(data?.messages) ? data.messages : [];
+        if (loadedMessages.length) {
+          setMessages(loadedMessages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })));
+        }
+        setConversationLoaded(true);
+      })
+      .catch(() => {
+        if (mounted) {
+          setConversationLoaded(true);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [api, conversationId, conversationLoaded]);
 
   if (!canUseAssistant) {
     return null;

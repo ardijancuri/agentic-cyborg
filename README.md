@@ -16,6 +16,7 @@ It is designed to be installed as a private npm addon: `@oninova/personal-softwa
 - A generic React floating assistant drawer for host frontends.
 - A WooCommerce integration template with a WordPress plugin and central Node service runner.
 - An Argjira CRM adapter example and a Node/React/Postgres starter template.
+- Session persistence in the frontend drawer: only the active `conversationId` and a short recent-message cache are stored locally, while full history stays in the backend tables.
 
 ## Core Idea
 
@@ -49,7 +50,8 @@ WooCommerce supports two install modes:
 - WordPress stores assistant conversations, messages, context documents, draft actions, and tool runs in custom `{prefix}psa_assistant_*` tables.
 - WordPress exposes `/wp-json/oninova-assistant/v1/*` endpoints for the admin drawer and signed tool callbacks.
 - WooCommerce data access stays inside the plugin through WooCommerce/WordPress APIs.
-- V1 write support is limited to reviewed single or bulk `regular_price` and `sale_price` updates for simple products and variations.
+- Read tools include order statistics, product/category comparisons, customer order preferences, and deterministic marketing campaign recommendations.
+- V1 write support includes reviewed single, itemized bulk, and category bulk product price/sale-price updates plus approved product detail fields.
 
 Plugin template:
 
@@ -167,6 +169,8 @@ import '@oninova/personal-software-assistant/react/styles.css';
 
 const assistantApi = {
   chat: (data) => api.post('/assistant/chat', data).then((res) => res.data),
+  getConversations: () => api.get('/assistant/conversations').then((res) => res.data),
+  getConversation: (id) => api.get(`/assistant/conversations/${id}`).then((res) => res.data),
   getContext: () => api.get('/assistant/context').then((res) => res.data),
   refreshContext: () => api.post('/assistant/context/refresh').then((res) => res.data),
   applyDraftAction: (id) => api.post(`/assistant/draft-actions/${id}/apply`).then((res) => res.data),
@@ -236,6 +240,14 @@ const writeActionRegistry = createWriteActionRegistry({
 
 The assistant may propose `update_product_price`, `bulk_update_product_prices`, or `bulk_update_product_prices_by_category`, but they must stay `requiresUserReview: true`. The backend stores them as `draft`; only `POST /api/assistant/draft-actions/:id/apply` can mark them `applied`.
 
+Product detail write actions follow the same rule. Standard action names are:
+
+- `update_product_details`
+- `bulk_update_product_details`
+- `bulk_update_product_details_by_category`
+
+Host apps must whitelist editable fields and validate every change before saving. The Node/Postgres template includes a conservative example for `name`, `sku`, `description`, `shortDescription`, `status`, and `categoryId`.
+
 ## Environment Variables
 
 ```env
@@ -258,6 +270,7 @@ If `OPENAI_API_KEY` is missing, the assistant still mounts and stores history, b
 - Register real frontend routes in `pageRegistry`; draft actions are clamped to those routes.
 - Create draft action types that only guide users to existing screens.
 - Add write handlers only for narrow, reviewed updates. Keep each handler role-aware, transactional, and audited.
+- For ecommerce/CRM apps, add read tools for product performance, category comparison, order statistics, customer preferences, and marketing recommendations.
 - Add role checks before mounting `/api/assistant`.
 - Apply the assistant SQL schema in that app's database.
 

@@ -82,7 +82,7 @@ export const createArgjiraPageRegistry = () => [
     route: '/stock',
     description: 'Main warehouse stock and inventory.',
     aliases: ['stock', 'inventory', 'magacin 1', 'warehouse 1'],
-    actionTypes: ['review_stock', 'update_product_price', 'bulk_update_product_prices', 'bulk_update_product_prices_by_category'],
+    actionTypes: ['review_stock', 'update_product_price', 'bulk_update_product_prices', 'bulk_update_product_prices_by_category', 'update_product_details', 'bulk_update_product_details', 'bulk_update_product_details_by_category'],
     keywords: ['stock', 'inventory', 'warehouse', 'magacin', 'low stock'],
   },
   {
@@ -91,7 +91,7 @@ export const createArgjiraPageRegistry = () => [
     route: '/stock-1',
     description: 'Second warehouse stock and inventory.',
     aliases: ['stock 2', 'inventory 2', 'magacin 2', 'warehouse 2'],
-    actionTypes: ['update_product_price', 'bulk_update_product_prices', 'bulk_update_product_prices_by_category'],
+    actionTypes: ['update_product_price', 'bulk_update_product_prices', 'bulk_update_product_prices_by_category', 'update_product_details', 'bulk_update_product_details', 'bulk_update_product_details_by_category'],
     keywords: ['stock 2', 'warehouse 2', 'magacin 2'],
   },
   {

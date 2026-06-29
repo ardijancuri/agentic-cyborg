@@ -24,6 +24,20 @@ const periodStart = (period = 'month') => {
   return from;
 };
 
+const previousPeriodStart = (period = 'month') => {
+  const currentStart = periodStart(period);
+  const now = new Date();
+  const durationMs = Math.max(1, now.getTime() - currentStart.getTime());
+  return new Date(currentStart.getTime() - durationMs);
+};
+
+const normalizeIds = (values = [], limit = 20) => {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))]
+    .slice(0, limit);
+};
+
 export const createProjectToolRegistry = ({ pool }) => {
   if (!pool?.query) {
     throw new Error('createProjectToolRegistry requires a PostgreSQL pool/client');
@@ -146,6 +160,258 @@ export const createProjectToolRegistry = ({ pool }) => {
           `, [from, safeLimit]);
 
           return { period, limit: safeLimit, products: result.rows };
+        },
+      },
+      {
+        name: 'get_order_statistics',
+        description: 'Read-only order statistics with optional previous-period comparison.',
+        parameters: {
+          type: 'object',
+          properties: {
+            period: { type: 'string', enum: ['today', 'week', 'month', 'year', 'all'] },
+            comparePrevious: { type: 'boolean' },
+          },
+          additionalProperties: false,
+        },
+        async handler({ period = 'month', comparePrevious = false } = {}) {
+          const from = periodStart(period);
+          const current = await pool.query(`
+            SELECT
+              COUNT(*)::int AS "orderCount",
+              COALESCE(SUM(total), 0)::numeric AS revenue,
+              COALESCE(AVG(total), 0)::numeric AS "averageOrderValue",
+              COUNT(DISTINCT customer_id)::int AS "uniqueCustomers"
+            FROM orders
+            WHERE status != 'cancelled'
+              AND created_at >= $1
+          `, [from]);
+          const data = { period, from, ...(current.rows[0] || {}) };
+
+          if (comparePrevious && period !== 'all') {
+            const previousFrom = previousPeriodStart(period);
+            const previous = await pool.query(`
+              SELECT
+                COUNT(*)::int AS "orderCount",
+                COALESCE(SUM(total), 0)::numeric AS revenue
+              FROM orders
+              WHERE status != 'cancelled'
+                AND created_at >= $1
+                AND created_at < $2
+            `, [previousFrom, from]);
+            data.previousPeriod = previous.rows[0] || {};
+          }
+
+          return data;
+        },
+      },
+      {
+        name: 'get_product_performance',
+        description: 'Read-only product performance ranked by revenue or quantity.',
+        parameters: {
+          type: 'object',
+          properties: {
+            period: { type: 'string', enum: ['today', 'week', 'month', 'year', 'all'] },
+            categoryId: { type: 'string' },
+            sortBy: { type: 'string', enum: ['revenue', 'quantity'] },
+            limit: { type: 'integer', minimum: 1, maximum: 50 },
+          },
+          additionalProperties: false,
+        },
+        async handler({ period = 'month', categoryId = '', sortBy = 'revenue', limit = 10 } = {}) {
+          const safeLimit = clampToolLimit(limit, 10, 50);
+          const from = periodStart(period);
+          const orderBy = sortBy === 'quantity' ? 'quantity' : 'revenue';
+          const result = await pool.query(`
+            SELECT
+              p.id::text AS "productId",
+              p.name,
+              p.sku,
+              p.category_id::text AS "categoryId",
+              SUM(oi.quantity)::numeric AS quantity,
+              SUM(oi.total)::numeric AS revenue,
+              CASE WHEN SUM(oi.quantity) > 0 THEN SUM(oi.total) / SUM(oi.quantity) ELSE 0 END::numeric AS "averageSoldPrice"
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            JOIN products p ON p.id = oi.product_id
+            WHERE o.status != 'cancelled'
+              AND o.created_at >= $1
+              AND ($2 = '' OR p.category_id::text = $2)
+            GROUP BY p.id, p.name, p.sku, p.category_id
+            ORDER BY ${orderBy} DESC
+            LIMIT $3
+          `, [from, String(categoryId || ''), safeLimit]);
+
+          return { period, sortBy: orderBy, categoryId: categoryId || null, products: result.rows };
+        },
+      },
+      {
+        name: 'compare_products',
+        description: 'Read-only comparison of selected products by quantity, revenue, and average sold price.',
+        parameters: {
+          type: 'object',
+          properties: {
+            period: { type: 'string', enum: ['today', 'week', 'month', 'year', 'all'] },
+            productIds: { type: 'array', items: { type: 'string' } },
+          },
+          additionalProperties: false,
+        },
+        async handler({ period = 'month', productIds = [] } = {}) {
+          const ids = normalizeIds(productIds, 20);
+          if (!ids.length) {
+            return { period, products: [] };
+          }
+          const from = periodStart(period);
+          const result = await pool.query(`
+            SELECT
+              p.id::text AS "productId",
+              p.name,
+              p.sku,
+              COALESCE(SUM(oi.quantity), 0)::numeric AS quantity,
+              COALESCE(SUM(oi.total), 0)::numeric AS revenue,
+              CASE WHEN COALESCE(SUM(oi.quantity), 0) > 0 THEN SUM(oi.total) / SUM(oi.quantity) ELSE 0 END::numeric AS "averageSoldPrice"
+            FROM products p
+            LEFT JOIN order_items oi ON oi.product_id = p.id
+            LEFT JOIN orders o ON o.id = oi.order_id AND o.status != 'cancelled' AND o.created_at >= $1
+            WHERE p.id::text = ANY($2::text[])
+            GROUP BY p.id, p.name, p.sku
+            ORDER BY revenue DESC
+          `, [from, ids]);
+
+          return { period, products: result.rows };
+        },
+      },
+      {
+        name: 'compare_categories',
+        description: 'Read-only comparison of selected product categories by quantity and revenue.',
+        parameters: {
+          type: 'object',
+          properties: {
+            period: { type: 'string', enum: ['today', 'week', 'month', 'year', 'all'] },
+            categoryIds: { type: 'array', items: { type: 'string' } },
+            categoryNames: { type: 'array', items: { type: 'string' } },
+          },
+          additionalProperties: false,
+        },
+        async handler({ period = 'month', categoryIds = [], categoryNames = [] } = {}) {
+          const ids = normalizeIds(categoryIds, 20);
+          const names = normalizeIds(categoryNames, 20);
+          const from = periodStart(period);
+          const result = await pool.query(`
+            SELECT
+              c.id::text AS "categoryId",
+              c.name,
+              COALESCE(SUM(oi.quantity), 0)::numeric AS quantity,
+              COALESCE(SUM(oi.total), 0)::numeric AS revenue
+            FROM categories c
+            LEFT JOIN products p ON p.category_id = c.id
+            LEFT JOIN order_items oi ON oi.product_id = p.id
+            LEFT JOIN orders o ON o.id = oi.order_id AND o.status != 'cancelled' AND o.created_at >= $1
+            WHERE (cardinality($2::text[]) = 0 OR c.id::text = ANY($2::text[]))
+              AND (cardinality($3::text[]) = 0 OR c.name = ANY($3::text[]))
+            GROUP BY c.id, c.name
+            ORDER BY revenue DESC
+            LIMIT 20
+          `, [from, ids, names]);
+
+          return { period, categories: result.rows };
+        },
+      },
+      {
+        name: 'get_customer_order_preferences',
+        description: 'Read-only summary of what customers order most and repeat-customer behavior.',
+        parameters: {
+          type: 'object',
+          properties: {
+            period: { type: 'string', enum: ['today', 'week', 'month', 'year', 'all'] },
+            limit: { type: 'integer', minimum: 1, maximum: 20 },
+          },
+          additionalProperties: false,
+        },
+        async handler({ period = 'month', limit = 10 } = {}) {
+          const safeLimit = clampToolLimit(limit, 10, 20);
+          const from = periodStart(period);
+          const topProducts = await pool.query(`
+            SELECT p.name, p.sku, SUM(oi.quantity)::numeric AS quantity, SUM(oi.total)::numeric AS revenue
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            JOIN products p ON p.id = oi.product_id
+            WHERE o.status != 'cancelled' AND o.created_at >= $1
+            GROUP BY p.id, p.name, p.sku
+            ORDER BY quantity DESC
+            LIMIT $2
+          `, [from, safeLimit]);
+          const customerStats = await pool.query(`
+            WITH customer_counts AS (
+              SELECT customer_id, COUNT(*)::int AS order_count
+              FROM orders
+              WHERE status != 'cancelled' AND created_at >= $1 AND customer_id IS NOT NULL
+              GROUP BY customer_id
+            )
+            SELECT
+              COUNT(*)::int AS "uniqueCustomers",
+              COUNT(*) FILTER (WHERE order_count > 1)::int AS "repeatCustomers"
+            FROM customer_counts
+          `, [from]);
+
+          return {
+            period,
+            topProducts: topProducts.rows,
+            ...(customerStats.rows[0] || {}),
+          };
+        },
+      },
+      {
+        name: 'get_marketing_campaign_recommendations',
+        description: 'Read-only deterministic marketing campaign recommendations from sales, product, category, and stock statistics.',
+        parameters: {
+          type: 'object',
+          properties: {
+            period: { type: 'string', enum: ['week', 'month', 'year'] },
+            limit: { type: 'integer', minimum: 1, maximum: 10 },
+          },
+          additionalProperties: false,
+        },
+        async handler({ period = 'month', limit = 5 } = {}) {
+          const safeLimit = clampToolLimit(limit, 5, 10);
+          const topProducts = await pool.query(`
+            SELECT p.id::text AS "productId", p.name, p.sku, SUM(oi.quantity)::numeric AS quantity, SUM(oi.total)::numeric AS revenue
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            JOIN products p ON p.id = oi.product_id
+            WHERE o.status != 'cancelled' AND o.created_at >= $1
+            GROUP BY p.id, p.name, p.sku
+            ORDER BY revenue DESC
+            LIMIT $2
+          `, [periodStart(period), safeLimit]);
+          const lowStock = await pool.query(`
+            SELECT p.name, p.sku, i.quantity
+            FROM inventory_items i
+            JOIN products p ON p.id = i.product_id
+            WHERE i.quantity <= COALESCE(i.reorder_level, 5)
+            ORDER BY i.quantity ASC
+            LIMIT $1
+          `, [safeLimit]);
+          const recommendations = [];
+
+          if (topProducts.rows[0]) {
+            recommendations.push({
+              type: 'bestseller_campaign',
+              title: 'Promote the strongest product',
+              reason: `${topProducts.rows[0].name} has the highest revenue in the selected period.`,
+              target: topProducts.rows[0],
+            });
+          }
+
+          if (lowStock.rows.length) {
+            recommendations.push({
+              type: 'stock_safe_campaign',
+              title: 'Avoid low-stock campaign targets',
+              reason: 'Some products are low stock and should be excluded from paid campaigns.',
+              target: lowStock.rows,
+            });
+          }
+
+          return { period, recommendations };
         },
       },
     ],

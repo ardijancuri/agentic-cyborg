@@ -11,9 +11,15 @@ const DEFAULT_DRAFT_TYPES = new Set([
   'update_product_price',
   'bulk_update_product_prices',
   'bulk_update_product_prices_by_category',
+  'update_product_details',
+  'bulk_update_product_details',
+  'bulk_update_product_details_by_category',
   'update_woocommerce_product_price',
   'bulk_update_woocommerce_product_prices',
   'bulk_update_woocommerce_category_product_prices',
+  'update_woocommerce_product_details',
+  'bulk_update_woocommerce_product_details',
+  'bulk_update_woocommerce_category_product_details',
   'operational_note',
 ]);
 

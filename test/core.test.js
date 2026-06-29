@@ -43,7 +43,14 @@ const TEST_PAGE_REGISTRY = [
     id: 'wc_products',
     label: 'WooCommerce Products',
     route: '/wp-admin/edit.php?post_type=product',
-    actionTypes: ['update_woocommerce_product_price', 'bulk_update_woocommerce_product_prices', 'bulk_update_woocommerce_category_product_prices'],
+    actionTypes: [
+      'update_woocommerce_product_price',
+      'bulk_update_woocommerce_product_prices',
+      'bulk_update_woocommerce_category_product_prices',
+      'update_woocommerce_product_details',
+      'bulk_update_woocommerce_product_details',
+      'bulk_update_woocommerce_category_product_details',
+    ],
     keywords: ['product', 'price'],
   },
 ];
@@ -133,6 +140,8 @@ test('system prompt includes host app and tool names', () => {
   assert.match(prompt, /2-5 concise/);
   assert.match(prompt, /Registered pages/);
   assert.match(prompt, /\/reports/);
+  assert.match(prompt, /do not require every product id/i);
+  assert.match(prompt, /instead of asking for product ids/i);
 });
 
 test('draft actions are clamped to registered host routes', () => {
@@ -269,6 +278,59 @@ test('bulk product price draft actions are review-only and route-clamped', () =>
   assert.equal(actions[2].targetRoute, '/wp-admin/edit.php?post_type=product');
   assert.equal(actions[2].status, 'draft');
   assert.equal(actions[2].requiresUserReview, true);
+});
+
+test('product detail draft actions are review-only and route-clamped', () => {
+  const actions = validateDraftActions([
+    {
+      type: 'bulk_update_woocommerce_category_product_details',
+      title: 'Bulk update product visibility',
+      reason: 'Owner requested a reviewed category product detail update.',
+      targetRoute: '/bad-route',
+      payload: {
+        categoryName: 'Tekstil',
+        fields: { status: 'draft' },
+        includeVariations: false,
+        maxItems: 100,
+        reason: 'Seasonal cleanup',
+      },
+      confidence: 0.8,
+      requiresUserReview: false,
+      status: 'applied',
+    },
+    {
+      type: 'bulk_update_product_details_by_category',
+      title: 'Bulk update generic product details',
+      reason: 'Owner requested a reviewed category detail update.',
+      targetRoute: '/wrong',
+      payload: {
+        categoryId: 'cat-1',
+        fields: { status: 'draft' },
+        maxItems: 50,
+      },
+      confidence: 0.7,
+    },
+  ], {
+    pageRegistry: [
+      ...TEST_PAGE_REGISTRY,
+      {
+        id: 'products',
+        label: 'Products',
+        route: '/products',
+        actionTypes: ['bulk_update_product_details_by_category'],
+        keywords: ['products'],
+      },
+    ],
+    fallbackRoute: '/dashboard',
+  });
+
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0].type, 'bulk_update_woocommerce_category_product_details');
+  assert.equal(actions[0].targetRoute, '/wp-admin/edit.php?post_type=product');
+  assert.equal(actions[0].requiresUserReview, true);
+  assert.equal(actions[0].status, 'draft');
+  assert.equal(actions[1].type, 'bulk_update_product_details_by_category');
+  assert.equal(actions[1].targetRoute, '/products');
 });
 
 test('read-only tool registry exposes only named tools and passes context', async () => {
@@ -691,6 +753,7 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
       assert.equal(input.writeActions[1].type, 'bulk_update_woocommerce_product_prices');
       assert.equal(input.writeActions[2].type, 'bulk_update_woocommerce_category_product_prices');
       assert.equal(input.pageRegistry[0].route, '/wp-admin/edit.php?post_type=product');
+      assert.equal(input.extraInstructions.some((instruction) => /do not ask for individual product ids/i.test(instruction)), true);
       return {
         answer: 'Done',
         citations: [],

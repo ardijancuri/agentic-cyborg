@@ -23,7 +23,7 @@ export const createProjectAssistantService = ({
     toolRegistry: createProjectToolRegistry({ pool }),
     contextSources: createProjectContextSources(),
     pageRegistry: createProjectPageRegistry(),
-    writeActionRegistry: createProjectWriteActionRegistry(),
+    writeActionRegistry: createProjectWriteActionRegistry({ pool }),
     fallbackRoute: '/dashboard',
     config: readAssistantConfig(process.env),
     appName,

@@ -4,17 +4,38 @@
     'update_woocommerce_product_price',
     'bulk_update_woocommerce_product_prices',
     'bulk_update_woocommerce_category_product_prices',
+    'update_woocommerce_product_details',
+    'bulk_update_woocommerce_product_details',
+    'bulk_update_woocommerce_category_product_details',
   ]);
   const closedStatuses = new Set(['applied', 'rejected']);
+  const sessionKey = 'psa-wc-assistant-session-v1';
+  const sessionMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
+
+  function readSession() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(sessionKey) || 'null');
+      if (!parsed || !parsed.savedAt || Date.now() - parsed.savedAt > sessionMaxAgeMs) {
+        window.localStorage.removeItem(sessionKey);
+        return {};
+      }
+      return parsed;
+    } catch (error) {
+      return {};
+    }
+  }
+
+  const savedSession = readSession();
 
   const state = {
     open: false,
-    conversationId: null,
-    messages: [],
-    draftActions: [],
+    conversationId: savedSession.conversationId || null,
+    messages: Array.isArray(savedSession.messages) ? savedSession.messages : [],
+    draftActions: Array.isArray(savedSession.draftActions) ? savedSession.draftActions : [],
     context: null,
     loading: false,
     refreshing: false,
+    conversationLoaded: false,
     actionBusy: {},
     error: '',
   };
@@ -44,6 +65,19 @@
       }
       return payload;
     });
+  }
+
+  function persistSession() {
+    try {
+      window.localStorage.setItem(sessionKey, JSON.stringify({
+        conversationId: state.conversationId || null,
+        messages: state.messages.slice(-12),
+        draftActions: state.draftActions.slice(0, 12),
+        savedAt: Date.now(),
+      }));
+    } catch (error) {
+      // Ignore storage failures; WordPress keeps the canonical conversation history.
+    }
   }
 
   function escapeHtml(value) {
@@ -316,19 +350,29 @@
     const payload = action.payload || {};
     const items = Array.isArray(payload.items) ? payload.items : [];
     const category = payload.categoryName || payload.categorySlug || payload.categoryId;
+    const fields = payload.fields && typeof payload.fields === 'object' ? Object.keys(payload.fields) : [];
     const lines = [];
 
     if (category) {
       lines.push('Category: ' + category);
       if (payload.priceField) lines.push('Field: ' + payload.priceField);
       if (payload.operation) lines.push('Operation: ' + payload.operation);
+      if (fields.length) lines.push('Product fields: ' + fields.join(', '));
       if (payload.newPrice !== undefined && payload.newPrice !== null && payload.newPrice !== '') lines.push('New price: ' + payload.newPrice);
       if (payload.percent !== undefined && payload.percent !== null && payload.percent !== '') lines.push('Percent: ' + payload.percent + '%');
       if (payload.currency) lines.push('Currency: ' + payload.currency);
       if (payload.maxItems) lines.push('Limit: ' + payload.maxItems + ' items');
     } else if (items.length) {
+      const itemFields = [];
+      items.forEach(function (item) {
+        if (item.fields && typeof item.fields === 'object') {
+          Object.keys(item.fields).forEach(function (field) { itemFields.push(field); });
+        }
+      });
+      const uniqueFields = Array.from(new Set(itemFields));
       lines.push(items.length + ' product' + (items.length === 1 ? '' : 's') + ' selected');
       if (payload.priceField) lines.push('Field: ' + payload.priceField);
+      if (uniqueFields.length) lines.push('Product fields: ' + uniqueFields.join(', '));
       if (payload.currency) lines.push('Currency: ' + payload.currency);
       items.slice(0, 5).forEach(function (item) {
         const line = formatPriceTarget(item);
@@ -338,6 +382,7 @@
     } else {
       const line = formatPriceTarget(payload);
       if (line) lines.push(line);
+      if (fields.length) lines.push('Product fields: ' + fields.join(', '));
       if (payload.currentPrice !== undefined && payload.currentPrice !== null) lines.push('Current: ' + payload.currentPrice);
       if (payload.currency) lines.push('Currency: ' + payload.currency);
     }
@@ -420,6 +465,7 @@
         state.open = !state.open;
         render();
         if (state.open && !state.context) loadContext();
+        if (state.open && state.conversationId && !state.conversationLoaded) loadConversation();
       });
     }
 
@@ -469,6 +515,23 @@
     });
   }
 
+  function loadConversation() {
+    if (!state.conversationId || state.conversationLoaded) return;
+    api('conversations/' + state.conversationId).then(function (payload) {
+      if (Array.isArray(payload.messages) && payload.messages.length) {
+        state.messages = payload.messages.map(function (message) {
+          return { role: message.role, content: message.content };
+        });
+      }
+      state.conversationLoaded = true;
+      persistSession();
+      render();
+    }).catch(function () {
+      state.conversationLoaded = true;
+      render();
+    });
+  }
+
   function refreshContext() {
     if (state.refreshing) return;
     state.refreshing = true;
@@ -491,6 +554,7 @@
     state.error = '';
     state.draftActions = [];
     state.messages.push({ role: 'user', content: clean });
+    persistSession();
     render();
 
     api('chat', {
@@ -504,9 +568,12 @@
       state.conversationId = payload.conversation && payload.conversation.id ? payload.conversation.id : state.conversationId;
       state.messages.push({ role: 'assistant', content: payload.answer || '' });
       state.draftActions = payload.draftActions || [];
+      state.conversationLoaded = true;
+      persistSession();
     }).catch(function (error) {
       state.error = error.message;
       state.messages.push({ role: 'assistant', content: error.message });
+      persistSession();
     }).finally(function () {
       state.loading = false;
       render();
@@ -525,9 +592,11 @@
     render();
     api('draft-actions/' + action.id + '/apply', { method: 'POST' }).then(function (payload) {
       if (payload.draftAction) replaceAction(payload.draftAction);
+      persistSession();
     }).catch(function (error) {
       state.error = error.message;
       replaceAction(Object.assign({}, action, { status: 'failed', metadata: { error: error.message } }));
+      persistSession();
     }).finally(function () {
       delete state.actionBusy[action.id];
       render();
@@ -540,6 +609,7 @@
     render();
     api('draft-actions/' + action.id + '/reject', { method: 'POST' }).then(function (payload) {
       if (payload.draftAction) replaceAction(payload.draftAction);
+      persistSession();
     }).catch(function (error) {
       state.error = error.message;
     }).finally(function () {

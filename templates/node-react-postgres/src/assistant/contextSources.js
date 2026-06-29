@@ -64,4 +64,29 @@ export const createProjectContextSources = () => [
       metadata: { adapter: 'node-react-postgres', tool: 'get_unpaid_invoices' },
     };
   },
+  async ({ toolRegistry }) => {
+    const preferences = await toolRegistry.execute('get_customer_order_preferences', { period: 'month', limit: 10 });
+    const campaigns = await toolRegistry.execute('get_marketing_campaign_recommendations', { period: 'month', limit: 5 });
+
+    return {
+      scope: 'customer_preferences_and_marketing',
+      title: 'Customer Preferences And Marketing Ideas',
+      content: [
+        '# Customer Preferences And Marketing Ideas',
+        '',
+        `Unique customers: ${preferences.data.uniqueCustomers || 0}`,
+        `Repeat customers: ${preferences.data.repeatCustomers || 0}`,
+        '',
+        '## Top ordered products',
+        tableRows(preferences.data.topProducts || [], ['name', 'sku', 'quantity', 'revenue']),
+        '',
+        '## Suggested campaigns',
+        tableRows(campaigns.data.recommendations || [], ['type', 'title', 'reason']),
+      ].join('\n'),
+      metadata: {
+        adapter: 'node-react-postgres',
+        tools: ['get_customer_order_preferences', 'get_marketing_campaign_recommendations'],
+      },
+    };
+  },
 ];
