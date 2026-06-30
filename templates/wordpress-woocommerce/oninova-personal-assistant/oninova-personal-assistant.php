@@ -2166,9 +2166,11 @@ function psa_wc_assistant_build_system_prompt($payload) {
         '- Answer in the user language when clear; otherwise match the WordPress locale.',
         '- Be short and straightforward by default: 2-5 concise bullets or short paragraphs.',
         '- Start with the direct answer or recommendation, then add only the most important supporting numbers.',
+        '- Structure business answers for scanning: use short headings only when helpful, bullets for key points, and small tables for comparisons.',
         '- Use generated Markdown context first for stable store orientation.',
         '- Use approved read-only tools for live WooCommerce numbers, products, orders, and statistics.',
         '- Never invent WooCommerce values. If a number is unavailable, say what should be checked.',
+        '- When the user asks for statistics, orders, products, categories, comparisons, trends, or performance and numeric data is available, include up to two compact charts in charts[]. Use only tool/context numbers; otherwise return charts: [].',
         '- Never claim that you changed product data unless a separate user-approved apply action succeeds.',
         '- Draft actions are suggestions only and always require manual user review.',
         '- Draft action targetRoute must exactly match one registered wp-admin route below. Do not invent routes, query params, record URLs, or external links.',
@@ -2198,7 +2200,7 @@ function psa_wc_assistant_openai_output_schema() {
     return array(
         'type' => 'object',
         'additionalProperties' => false,
-        'required' => array('answer', 'citations', 'draftActions'),
+        'required' => array('answer', 'citations', 'draftActions', 'charts'),
         'properties' => array(
             'answer' => array('type' => 'string'),
             'citations' => array(
@@ -2230,8 +2232,106 @@ function psa_wc_assistant_openai_output_schema() {
                     ),
                 ),
             ),
+            'charts' => array(
+                'type' => 'array',
+                'maxItems' => 2,
+                'items' => array(
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'required' => array('type', 'title', 'labels', 'datasets'),
+                    'properties' => array(
+                        'type' => array('type' => 'string', 'enum' => array('bar', 'line', 'donut')),
+                        'title' => array('type' => 'string'),
+                        'description' => array('type' => 'string'),
+                        'unit' => array('type' => 'string'),
+                        'labels' => array(
+                            'type' => 'array',
+                            'maxItems' => 12,
+                            'items' => array('type' => 'string'),
+                        ),
+                        'datasets' => array(
+                            'type' => 'array',
+                            'maxItems' => 4,
+                            'items' => array(
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => array('label', 'data'),
+                                'properties' => array(
+                                    'label' => array('type' => 'string'),
+                                    'data' => array(
+                                        'type' => 'array',
+                                        'maxItems' => 12,
+                                        'items' => array('type' => 'number'),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         ),
     );
+}
+
+function psa_wc_assistant_validate_charts($charts) {
+    $validated = array();
+    $allowed_types = array('bar', 'line', 'donut');
+
+    foreach (array_slice(is_array($charts) ? $charts : array(), 0, 2) as $chart) {
+        if (!is_array($chart)) {
+            continue;
+        }
+
+        $labels = array();
+        foreach (array_slice(isset($chart['labels']) && is_array($chart['labels']) ? $chart['labels'] : array(), 0, 12) as $label) {
+            $clean_label = substr(sanitize_text_field((string) $label), 0, 80);
+            if ($clean_label !== '') {
+                $labels[] = $clean_label;
+            }
+        }
+
+        $datasets = array();
+        foreach (array_slice(isset($chart['datasets']) && is_array($chart['datasets']) ? $chart['datasets'] : array(), 0, 4) as $dataset) {
+            if (!is_array($dataset)) {
+                continue;
+            }
+
+            $data = array();
+            foreach (array_slice(isset($dataset['data']) && is_array($dataset['data']) ? $dataset['data'] : array(), 0, count($labels)) as $value) {
+                if (!is_numeric($value)) {
+                    $data = array();
+                    break;
+                }
+                $data[] = (float) $value;
+            }
+
+            if (count($data) !== count($labels) || count($data) === 0) {
+                continue;
+            }
+
+            $datasets[] = array(
+                'label' => substr(sanitize_text_field(isset($dataset['label']) ? (string) $dataset['label'] : 'Value'), 0, 80),
+                'data' => $data,
+            );
+        }
+
+        $title = substr(sanitize_text_field(isset($chart['title']) ? (string) $chart['title'] : ''), 0, 140);
+        if ($title === '' || count($labels) === 0 || count($datasets) === 0) {
+            continue;
+        }
+
+        $type = isset($chart['type']) && in_array($chart['type'], $allowed_types, true) ? $chart['type'] : 'bar';
+        $validated[] = array(
+            'type' => $type,
+            'title' => $title,
+            'description' => substr(sanitize_text_field(isset($chart['description']) ? (string) $chart['description'] : ''), 0, 220),
+            'unit' => substr(sanitize_text_field(isset($chart['unit']) ? (string) $chart['unit'] : ''), 0, 24),
+            'labels' => $labels,
+            'datasets' => $datasets,
+        );
+    }
+
+    return $validated;
 }
 
 function psa_wc_assistant_openai_request($body) {
@@ -2385,6 +2485,7 @@ function psa_wc_assistant_call_openai_direct($payload) {
             'answer' => psa_wc_assistant_unavailable_message(),
             'citations' => array(),
             'draftActions' => array(),
+            'charts' => array(),
             'toolRuns' => array(),
         );
     }
@@ -2468,7 +2569,7 @@ function psa_wc_assistant_call_openai_direct($payload) {
     $text = psa_wc_assistant_extract_output_text($response);
     $parsed = json_decode($text, true);
     if (!is_array($parsed)) {
-        $parsed = array('answer' => $text !== '' ? $text : 'I could not produce a structured answer. Please try again.', 'citations' => array(), 'draftActions' => array());
+        $parsed = array('answer' => $text !== '' ? $text : 'I could not produce a structured answer. Please try again.', 'citations' => array(), 'draftActions' => array(), 'charts' => array());
     }
 
     return array(
@@ -2476,6 +2577,7 @@ function psa_wc_assistant_call_openai_direct($payload) {
         'answer' => isset($parsed['answer']) ? (string) $parsed['answer'] : '',
         'citations' => isset($parsed['citations']) && is_array($parsed['citations']) ? $parsed['citations'] : array(),
         'draftActions' => psa_wc_assistant_validate_direct_draft_actions(isset($parsed['draftActions']) ? $parsed['draftActions'] : array(), $fallback_route),
+        'charts' => psa_wc_assistant_validate_charts(isset($parsed['charts']) ? $parsed['charts'] : array()),
         'toolRuns' => $tool_runs,
         'providerResponseId' => isset($response['id']) ? $response['id'] : null,
     );
@@ -2489,6 +2591,7 @@ function psa_wc_assistant_call_ai($payload) {
                 'answer' => psa_wc_assistant_unavailable_message(),
                 'citations' => array(),
                 'draftActions' => array(),
+                'charts' => array(),
                 'toolRuns' => array(),
             );
         }
@@ -2586,8 +2689,10 @@ function psa_wc_assistant_rest_chat($request) {
     }
 
     $answer = isset($service_response['answer']) ? (string) $service_response['answer'] : '';
+    $charts = psa_wc_assistant_validate_charts(isset($service_response['charts']) ? $service_response['charts'] : array());
     $assistant_message = psa_wc_assistant_add_message($conversation['id'], 'assistant', $answer, array(
         'citations' => isset($service_response['citations']) ? $service_response['citations'] : array(),
+        'charts' => $charts,
         'providerResponseId' => isset($service_response['providerResponseId']) ? $service_response['providerResponseId'] : null,
         'status' => isset($service_response['status']) ? $service_response['status'] : array(),
     ));
@@ -2609,6 +2714,7 @@ function psa_wc_assistant_rest_chat($request) {
         'assistantMessage' => $assistant_message,
         'answer' => $answer,
         'citations' => isset($service_response['citations']) ? $service_response['citations'] : array(),
+        'charts' => $charts,
         'draftActions' => $draft_actions,
     ));
 }

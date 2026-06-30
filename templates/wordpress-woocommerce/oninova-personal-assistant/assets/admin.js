@@ -318,6 +318,121 @@
     }).join('') + '</div>';
   }
 
+  const chartColors = ['#2563eb', '#059669', '#d97706', '#7c3aed'];
+
+  function formatChartValue(value, unit) {
+    const numeric = Number(value) || 0;
+    return numeric.toLocaleString(undefined, { maximumFractionDigits: 2 }) + (unit ? ' ' + unit : '');
+  }
+
+  function maxChartValue(chart) {
+    const values = [];
+    (chart.datasets || []).forEach(function (dataset) {
+      (dataset.data || []).forEach(function (value) {
+        values.push(Math.abs(Number(value) || 0));
+      });
+    });
+    return Math.max.apply(Math, values.concat([1]));
+  }
+
+  function renderBarChart(chart) {
+    const maxValue = maxChartValue(chart);
+    return '<div class="psa-chart-bars">' + (chart.labels || []).map(function (label, labelIndex) {
+      return [
+        '<div class="psa-chart-row">',
+        '<div class="psa-chart-label">', escapeHtml(label), '</div>',
+        '<div class="psa-chart-row-bars">',
+        (chart.datasets || []).map(function (dataset, datasetIndex) {
+          const value = Number(dataset.data && dataset.data[labelIndex]) || 0;
+          const width = Math.max(4, Math.min(100, (Math.abs(value) / maxValue) * 100));
+          return [
+            '<div class="psa-chart-bar-line">',
+            '<span class="psa-chart-bar" style="width:', width, '%;background-color:', chartColors[datasetIndex % chartColors.length], '"></span>',
+            '<span class="psa-chart-value">', escapeHtml(formatChartValue(value, chart.unit)), '</span>',
+            '</div>',
+          ].join('');
+        }).join(''),
+        '</div></div>',
+      ].join('');
+    }).join('') + '</div>';
+  }
+
+  function renderLineChart(chart) {
+    const maxValue = maxChartValue(chart);
+    const width = 320;
+    const height = 132;
+    const padding = 18;
+    const plotWidth = width - padding * 2;
+    const plotHeight = height - padding * 2;
+    const labels = chart.labels || [];
+
+    const lines = (chart.datasets || []).map(function (dataset, datasetIndex) {
+      const points = (dataset.data || []).map(function (value, index) {
+        const x = padding + (labels.length === 1 ? plotWidth / 2 : (plotWidth * index) / Math.max(labels.length - 1, 1));
+        const y = height - padding - ((Number(value) || 0) / maxValue) * plotHeight;
+        return x + ',' + y;
+      }).join(' ');
+      return '<polyline points="' + escapeHtml(points) + '" fill="none" stroke="' + chartColors[datasetIndex % chartColors.length] + '" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>';
+    }).join('');
+
+    return [
+      '<div class="psa-chart-line-wrap"><svg class="psa-chart-line" viewBox="0 0 ', width, ' ', height, '" role="img" aria-label="', escapeHtml(chart.title), '">',
+      '<line x1="', padding, '" y1="', height - padding, '" x2="', width - padding, '" y2="', height - padding, '" class="psa-chart-axis"></line>',
+      '<line x1="', padding, '" y1="', padding, '" x2="', padding, '" y2="', height - padding, '" class="psa-chart-axis"></line>',
+      lines,
+      '</svg><div class="psa-chart-x-labels">',
+      labels.slice(0, 6).map(function (label) { return '<span>' + escapeHtml(label) + '</span>'; }).join(''),
+      '</div></div>',
+    ].join('');
+  }
+
+  function renderDonutChart(chart) {
+    const values = chart.datasets && chart.datasets[0] && Array.isArray(chart.datasets[0].data) ? chart.datasets[0].data : [];
+    const total = values.reduce(function (sum, value) {
+      return sum + Math.max(0, Number(value) || 0);
+    }, 0) || 1;
+
+    return [
+      '<div class="psa-chart-donut"><div class="psa-chart-segments">',
+      values.map(function (value, index) {
+        const width = (Math.max(0, Number(value) || 0) / total) * 100;
+        return '<span style="width:' + width + '%;background-color:' + chartColors[index % chartColors.length] + '"></span>';
+      }).join(''),
+      '</div><div class="psa-chart-legend">',
+      (chart.labels || []).map(function (label, index) {
+        return [
+          '<div class="psa-chart-legend-row">',
+          '<span style="background-color:', chartColors[index % chartColors.length], '"></span>',
+          '<span>', escapeHtml(label), '</span>',
+          '<strong>', escapeHtml(formatChartValue(values[index], chart.unit)), '</strong>',
+          '</div>',
+        ].join('');
+      }).join(''),
+      '</div></div>',
+    ].join('');
+  }
+
+  function renderCharts(charts) {
+    if (!Array.isArray(charts) || !charts.length) return '';
+
+    return '<div class="psa-charts">' + charts.slice(0, 2).map(function (chart) {
+      if (!chart || !Array.isArray(chart.labels) || !Array.isArray(chart.datasets)) return '';
+      const chartBody = chart.type === 'line'
+        ? renderLineChart(chart)
+        : chart.type === 'donut'
+          ? renderDonutChart(chart)
+          : renderBarChart(chart);
+      return [
+        '<figure class="psa-chart-card"><figcaption>',
+        '<strong>', escapeHtml(chart.title || 'Chart'), '</strong>',
+        chart.description ? '<span>' + escapeHtml(chart.description) + '</span>' : '',
+        '</figcaption>',
+        chartBody,
+        '</figure>',
+      ].join('');
+    }).join('') + '</div>';
+  }
+
   function latestRefresh() {
     const documents = state.context && state.context.documents ? state.context.documents : [];
     return documents.reduce(function (latest, document) {
@@ -329,10 +444,11 @@
 
   function renderMessage(message) {
     const isUser = message.role === 'user';
+    const charts = !isUser ? (message.charts || (message.metadata && message.metadata.charts) || []) : [];
     return [
       '<div class="psa-wc-message-row ', isUser ? 'is-user' : 'is-assistant', '">',
       '<div class="psa-wc-message ', isUser ? 'is-user' : 'is-assistant', '">',
-      isUser ? escapeHtml(message.content) : renderMarkdown(message.content),
+      isUser ? escapeHtml(message.content) : renderMarkdown(message.content) + renderCharts(charts),
       '</div></div>',
     ].join('');
   }
@@ -430,7 +546,7 @@
       : 'Context not refreshed yet';
 
     root.innerHTML = [
-      '<button type="button" class="psa-wc-fab" aria-label="AI Assistant">', state.open ? 'X' : 'AI', '</button>',
+      '<button type="button" class="psa-wc-fab ', state.open ? 'is-open' : '', '" aria-label="AI Assistant">', state.open ? 'X' : 'AI', '</button>',
       '<aside class="psa-wc-drawer ', state.open ? 'is-open' : '', '">',
       '<header class="psa-wc-header"><div><h2 class="psa-wc-title">AI Assistant</h2><p class="psa-wc-subtitle">',
       escapeHtml(subtitle),
@@ -452,6 +568,18 @@
     ].join('');
 
     bindEvents();
+    if (state.open) {
+      scrollToLatest();
+    }
+  }
+
+  function scrollToLatest() {
+    window.requestAnimationFrame(function () {
+      const body = root.querySelector('.psa-wc-body');
+      if (body) {
+        body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' });
+      }
+    });
   }
 
   function bindEvents() {
@@ -520,7 +648,7 @@
     api('conversations/' + state.conversationId).then(function (payload) {
       if (Array.isArray(payload.messages) && payload.messages.length) {
         state.messages = payload.messages.map(function (message) {
-          return { role: message.role, content: message.content };
+          return { role: message.role, content: message.content, charts: message.metadata && message.metadata.charts ? message.metadata.charts : [] };
         });
       }
       state.conversationLoaded = true;
@@ -566,7 +694,7 @@
       },
     }).then(function (payload) {
       state.conversationId = payload.conversation && payload.conversation.id ? payload.conversation.id : state.conversationId;
-      state.messages.push({ role: 'assistant', content: payload.answer || '' });
+      state.messages.push({ role: 'assistant', content: payload.answer || '', charts: payload.charts || [] });
       state.draftActions = payload.draftActions || [];
       state.conversationLoaded = true;
       persistSession();

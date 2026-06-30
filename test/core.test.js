@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readAssistantConfig } from '../src/core/config.js';
 import { validateDraftActions } from '../src/core/draftActions.js';
+import { validateAssistantCharts } from '../src/core/charts.js';
 import { buildSystemPrompt, buildUnavailableAssistantMessage } from '../src/core/promptBuilder.js';
 import { resolveDraftActionRoute } from '../src/core/pageRegistry.js';
 import { refreshAssistantContext, createStaticContextSource } from '../src/context/contextRefresh.js';
@@ -142,6 +143,35 @@ test('system prompt includes host app and tool names', () => {
   assert.match(prompt, /\/reports/);
   assert.match(prompt, /do not require every product id/i);
   assert.match(prompt, /instead of asking for product ids/i);
+  assert.match(prompt, /include up to two compact charts/i);
+});
+
+test('assistant charts are bounded and numeric', () => {
+  const charts = validateAssistantCharts([
+    {
+      type: 'bar',
+      title: 'Top products',
+      unit: 'orders',
+      labels: ['A', 'B'],
+      datasets: [{ label: 'Orders', data: [10, 5] }],
+    },
+    {
+      type: 'line',
+      title: 'Bad data',
+      labels: ['A'],
+      datasets: [{ label: 'Orders', data: ['not-a-number'] }],
+    },
+    {
+      type: 'donut',
+      title: 'Ignored third chart',
+      labels: ['A'],
+      datasets: [{ label: 'Orders', data: [1] }],
+    },
+  ]);
+
+  assert.equal(charts.length, 1);
+  assert.equal(charts[0].type, 'bar');
+  assert.deepEqual(charts[0].datasets[0].data, [10, 5]);
 });
 
 test('draft actions are clamped to registered host routes', () => {
@@ -629,7 +659,19 @@ test('openai responses provider keeps tool-call continuation stateless with encr
 
       return {
         id: 'resp-2',
-        output_text: JSON.stringify({ answer: 'Done', citations: [], draftActions: [] }),
+        output_text: JSON.stringify({
+          answer: 'Done',
+          citations: [],
+          draftActions: [],
+          charts: [
+            {
+              type: 'bar',
+              title: 'Sales',
+              labels: ['This month'],
+              datasets: [{ label: 'Revenue', data: [100] }],
+            },
+          ],
+        }),
         output: [],
       };
     }
@@ -656,6 +698,8 @@ test('openai responses provider keeps tool-call continuation stateless with encr
   });
 
   assert.equal(result.answer, 'Done');
+  assert.equal(result.charts.length, 1);
+  assert.equal(result.charts[0].title, 'Sales');
   assert.deepEqual(requests[0].include, ['reasoning.encrypted_content']);
   assert.deepEqual(requests[1].include, ['reasoning.encrypted_content']);
   assert.equal('previous_response_id' in requests[1], false);

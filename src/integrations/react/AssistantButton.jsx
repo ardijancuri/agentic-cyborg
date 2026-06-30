@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import MarkdownMessage from './MarkdownMessage';
+import AssistantCharts from './AssistantCharts';
 
 const defaultLabels = {
   title: 'AI Assistant',
@@ -96,7 +97,10 @@ function MessageBubble({ message }) {
         {isUser ? (
           <div className="psa-whitespace">{message.content}</div>
         ) : (
-          <MarkdownMessage content={message.content} />
+          <>
+            <MarkdownMessage content={message.content} />
+            <AssistantCharts charts={message.charts || message.metadata?.charts || []} />
+          </>
         )}
       </div>
     </div>
@@ -271,6 +275,27 @@ export default function AssistantButton({
   const [actionBusy, setActionBusy] = useState({});
   const [conversationLoaded, setConversationLoaded] = useState(false);
   const endRef = useRef(null);
+  const bodyRef = useRef(null);
+
+  const scrollToLatest = (behavior = 'smooth') => {
+    if (!isOpen) {
+      return;
+    }
+
+    const run = () => {
+      if (bodyRef.current) {
+        bodyRef.current.scrollTo({ top: bodyRef.current.scrollHeight, behavior });
+      } else {
+        endRef.current?.scrollIntoView({ behavior });
+      }
+    };
+
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+      window.requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  };
 
   useEffect(() => {
     if (!isOpen || !canUseAssistant || !api?.getContext) {
@@ -297,8 +322,8 @@ export default function AssistantButton({
   }, [api, canUseAssistant, isOpen, labels.loadContextError]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, draftActions, loading]);
+    scrollToLatest();
+  }, [isOpen, messages.length, draftActions.length, loading, error]);
 
   useEffect(() => {
     if (!persistSession) {
@@ -323,6 +348,7 @@ export default function AssistantButton({
           setMessages(loadedMessages.map((message) => ({
             role: message.role,
             content: message.content,
+            charts: message.metadata?.charts || [],
           })));
         }
         setConversationLoaded(true);
@@ -365,7 +391,11 @@ export default function AssistantButton({
       setConversationId(data.conversation?.id || conversationId);
       setMessages((current) => [
         ...current,
-        { role: 'assistant', content: data.answer || data.assistantMessage?.content || '' },
+        {
+          role: 'assistant',
+          content: data.answer || data.assistantMessage?.content || '',
+          charts: data.charts || data.assistantMessage?.metadata?.charts || [],
+        },
       ]);
       setDraftActions(data.draftActions || []);
       if (data.status) {
@@ -475,7 +505,8 @@ export default function AssistantButton({
         aria-label={labels.title}
         title={labels.title}
       >
-        {isOpen ? 'x' : 'AI'}
+        <span className="psa-fab-mark">{isOpen ? 'X' : 'AI'}</span>
+        {!isOpen && <span className="psa-fab-dot" />}
       </button>
 
       {isOpen && (
@@ -497,11 +528,11 @@ export default function AssistantButton({
               title={labels.refreshContext}
               aria-label={labels.refreshContext}
             >
-              {refreshing ? '...' : '↻'}
+              {refreshing ? '...' : 'Refresh'}
             </button>
           </header>
 
-          <div className="psa-body">
+          <div className="psa-body" ref={bodyRef}>
             {messages.length === 0 && (
               <div className="psa-card">
                 <div className="psa-card-title">{labels.businessQuestions}</div>

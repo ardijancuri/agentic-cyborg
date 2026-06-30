@@ -1,10 +1,11 @@
 import { buildSystemPrompt } from '../core/promptBuilder.js';
 import { validateDraftActions } from '../core/draftActions.js';
+import { validateAssistantCharts } from '../core/charts.js';
 
 const OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['answer', 'citations', 'draftActions'],
+  required: ['answer', 'citations', 'draftActions', 'charts'],
   properties: {
     answer: { type: 'string' },
     citations: {
@@ -33,6 +34,43 @@ const OUTPUT_SCHEMA = {
           payload: { type: 'object', additionalProperties: true },
           confidence: { type: 'number' },
           requiresUserReview: { type: 'boolean' },
+        },
+      },
+    },
+    charts: {
+      type: 'array',
+      maxItems: 2,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['type', 'title', 'labels', 'datasets'],
+        properties: {
+          type: { type: 'string', enum: ['bar', 'line', 'donut'] },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          unit: { type: 'string' },
+          labels: {
+            type: 'array',
+            maxItems: 12,
+            items: { type: 'string' },
+          },
+          datasets: {
+            type: 'array',
+            maxItems: 4,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['label', 'data'],
+              properties: {
+                label: { type: 'string' },
+                data: {
+                  type: 'array',
+                  maxItems: 12,
+                  items: { type: 'number' },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -76,6 +114,7 @@ const parseAssistantJson = (text) => {
       answer: text || 'I could not produce a structured answer. Please try again.',
       citations: [],
       draftActions: [],
+      charts: [],
     };
   }
 };
@@ -254,6 +293,7 @@ export class OpenAIResponsesProvider {
       answer: parsed.answer || '',
       citations: Array.isArray(parsed.citations) ? parsed.citations : [],
       draftActions: validateDraftActions(parsed.draftActions, draftActionOptions),
+      charts: validateAssistantCharts(parsed.charts),
       toolRuns,
       providerResponseId: response.id,
     };

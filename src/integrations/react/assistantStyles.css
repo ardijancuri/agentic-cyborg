@@ -1,40 +1,73 @@
+.psa-fab,
+.psa-drawer,
+.psa-drawer * {
+  box-sizing: border-box;
+}
+
 .psa-fab {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
+  right: 22px;
+  bottom: 22px;
   z-index: 60;
-  height: 56px;
-  width: 56px;
-  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 58px;
+  width: 58px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
-  background: #111827;
+  background: #0f172a;
   color: #fff;
-  font-weight: 700;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.28);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.32);
   cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.psa-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 22px 56px rgba(15, 23, 42, 0.38);
+}
+
+.psa-fab-mark {
+  line-height: 1;
+}
+
+.psa-fab-dot {
+  position: absolute;
+  right: 11px;
+  top: 11px;
+  height: 9px;
+  width: 9px;
+  border: 2px solid #0f172a;
+  border-radius: 999px;
+  background: #22c55e;
 }
 
 .psa-drawer {
   position: fixed;
   right: 16px;
-  bottom: 88px;
+  bottom: 92px;
   z-index: 60;
   display: flex;
-  width: min(440px, calc(100vw - 24px));
-  height: min(720px, calc(100dvh - 116px));
+  width: min(480px, calc(100vw - 24px));
+  height: min(760px, calc(100dvh - 124px));
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.26);
+  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
   color: #111827;
 }
 
 .psa-header,
 .psa-composer {
-  padding: 12px;
-  border-color: #e5e7eb;
+  flex-shrink: 0;
+  padding: 14px;
   background: #fff;
 }
 
@@ -48,47 +81,62 @@
 
 .psa-title {
   margin: 0;
+  color: #0f172a;
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .psa-subtitle {
-  margin: 4px 0 0;
-  color: #6b7280;
+  margin: 5px 0 0;
+  color: #64748b;
   font-size: 12px;
+  line-height: 1.35;
 }
 
 .psa-icon-button {
-  height: 36px;
-  width: 36px;
-  border: 1px solid #e5e7eb;
+  min-height: 34px;
+  min-width: 72px;
+  border: 1px solid #d8dee8;
   border-radius: 8px;
-  background: #fff;
+  background: #f8fafc;
+  color: #0f172a;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
+}
+
+.psa-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .psa-body {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
-  background: #f3f4f6;
+  padding: 16px 14px;
+  background: #f6f8fb;
+  scroll-behavior: smooth;
 }
 
 .psa-card,
 .psa-draft-card {
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
   background: #fff;
   padding: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .psa-card-title,
 .psa-section-label {
   margin-bottom: 8px;
-  font-size: 12px;
-  font-weight: 700;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
   text-transform: uppercase;
-  color: #6b7280;
 }
 
 .psa-starters {
@@ -97,17 +145,26 @@
 }
 
 .psa-starter {
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dfe5ee;
   border-radius: 8px;
   background: #fff;
-  padding: 8px;
+  color: #0f172a;
+  padding: 10px 11px;
   text-align: left;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
   cursor: pointer;
+}
+
+.psa-starter:hover {
+  border-color: #9db5d8;
+  background: #f8fafc;
 }
 
 .psa-flex {
   display: flex;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .psa-justify-end {
@@ -119,24 +176,24 @@
 }
 
 .psa-message {
-  max-width: 86%;
-  border-radius: 10px;
-  padding: 8px 10px;
+  max-width: 88%;
+  border-radius: 8px;
+  padding: 10px 12px;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .psa-message-user {
-  background: #111827;
+  background: #0f172a;
   color: #fff;
 }
 
 .psa-message-assistant {
-  max-width: 92%;
-  border: 1px solid #e5e7eb;
+  max-width: 94%;
+  border: 1px solid #dfe5ee;
   background: #fff;
   color: #111827;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
 }
 
 .psa-whitespace {
@@ -145,18 +202,22 @@
 
 .psa-markdown {
   display: grid;
-  gap: 8px;
+  gap: 9px;
   color: #111827;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .psa-md-heading {
-  margin: 2px 0 0;
-  color: #111827;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.35;
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.psa-md-heading:first-child {
+  margin-top: 0;
 }
 
 .psa-md-paragraph {
@@ -165,48 +226,50 @@
 
 .psa-md-list {
   margin: 0;
-  padding-left: 20px;
+  padding-left: 18px;
 }
 
 .psa-md-list li {
-  margin: 2px 0;
-  padding-left: 2px;
+  margin: 3px 0;
+  padding-left: 3px;
 }
 
 .psa-md-quote {
   margin: 0;
-  border-left: 2px solid #9ca3af;
-  padding-left: 10px;
-  color: #4b5563;
+  border-left: 3px solid #2563eb;
+  padding: 8px 10px;
+  border-radius: 0 8px 8px 0;
+  background: #eff6ff;
+  color: #334155;
 }
 
 .psa-md-code-block {
   margin: 0;
   overflow-x: auto;
   border-radius: 8px;
-  background: #111827;
-  color: #f9fafb;
-  padding: 8px 10px;
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 10px 12px;
   font-size: 12px;
   line-height: 1.5;
 }
 
 .psa-md-inline-code {
   border-radius: 4px;
-  background: #e5e7eb;
-  padding: 1px 4px;
-  color: #111827;
+  background: #eef2f7;
+  padding: 1px 5px;
+  color: #0f172a;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
 }
 
 .psa-md-strong {
-  color: #111827;
-  font-weight: 700;
+  color: #0f172a;
+  font-weight: 800;
 }
 
 .psa-md-link {
-  color: #111827;
+  color: #1d4ed8;
   font-weight: 700;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -214,7 +277,7 @@
 
 .psa-md-table-wrap {
   overflow-x: auto;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dfe5ee;
   border-radius: 8px;
   background: #fff;
 }
@@ -229,43 +292,189 @@
 
 .psa-md-table th,
 .psa-md-table td {
-  border-bottom: 1px solid #e5e7eb;
-  padding: 6px 8px;
+  border-bottom: 1px solid #e8edf4;
+  padding: 8px 9px;
   vertical-align: top;
 }
 
 .psa-md-table th {
-  background: #f9fafb;
-  color: #4b5563;
-  font-weight: 700;
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 800;
 }
 
 .psa-md-table tr:last-child td {
   border-bottom: 0;
 }
 
+.psa-charts {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.psa-chart-card {
+  margin: 0;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 12px;
+}
+
+.psa-chart-card figcaption {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 10px;
+}
+
+.psa-chart-card figcaption strong {
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.psa-chart-card figcaption span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.psa-chart-bars {
+  display: grid;
+  gap: 8px;
+}
+
+.psa-chart-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.42fr) 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.psa-chart-label,
+.psa-chart-value,
+.psa-chart-x-labels,
+.psa-chart-legend-row {
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.psa-chart-row-bars {
+  display: grid;
+  gap: 4px;
+}
+
+.psa-chart-bar-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.psa-chart-bar {
+  display: block;
+  height: 9px;
+  min-width: 4px;
+  border-radius: 999px;
+}
+
+.psa-chart-value {
+  min-width: 44px;
+  text-align: right;
+  font-weight: 700;
+}
+
+.psa-chart-line-wrap {
+  overflow: hidden;
+}
+
+.psa-chart-line {
+  display: block;
+  width: 100%;
+  height: 132px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.psa-chart-axis {
+  stroke: #d8dee8;
+  stroke-width: 1;
+}
+
+.psa-chart-x-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.psa-chart-x-labels span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.psa-chart-donut {
+  display: grid;
+  gap: 10px;
+}
+
+.psa-chart-segments {
+  display: flex;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8edf4;
+}
+
+.psa-chart-legend {
+  display: grid;
+  gap: 6px;
+}
+
+.psa-chart-legend-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 7px;
+  align-items: center;
+}
+
+.psa-chart-legend-row > span:first-child {
+  height: 10px;
+  width: 10px;
+  border-radius: 999px;
+}
+
+.psa-chart-legend-row strong {
+  color: #0f172a;
+  font-size: 11px;
+}
+
 .psa-loading,
 .psa-error {
-  margin-top: 10px;
+  margin-top: 12px;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 9px 11px;
   font-size: 13px;
 }
 
 .psa-loading {
+  border: 1px solid #dfe5ee;
   background: #fff;
-  color: #6b7280;
+  color: #64748b;
 }
 
 .psa-error {
-  background: #fee2e2;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
   color: #991b1b;
 }
 
 .psa-drafts {
   display: grid;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 9px;
+  margin-top: 14px;
 }
 
 .psa-draft-head {
@@ -284,14 +493,17 @@
 }
 
 .psa-draft-title {
+  color: #0f172a;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 .psa-draft-reason {
   margin: 4px 0 0;
-  color: #6b7280;
+  color: #64748b;
   font-size: 12px;
+  line-height: 1.4;
 }
 
 .psa-draft-payload {
@@ -299,25 +511,27 @@
   gap: 3px;
   margin: 10px 0 0;
   padding-left: 18px;
-  color: #4b5563;
+  color: #475569;
   font-size: 12px;
 }
 
 .psa-confidence {
   border-radius: 999px;
-  background: #f3f4f6;
+  background: #eef2f7;
+  color: #334155;
   padding: 3px 8px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .psa-status {
   border-radius: 999px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dfe5ee;
   background: #fff;
+  color: #334155;
   padding: 3px 8px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: capitalize;
 }
 
@@ -342,9 +556,9 @@
 .psa-link {
   display: inline-block;
   margin-top: 10px;
-  color: #111827;
+  color: #1d4ed8;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .psa-draft-actions {
@@ -358,21 +572,22 @@
   height: 34px;
   border-radius: 8px;
   padding: 0 12px;
+  font: inherit;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
 }
 
 .psa-action-apply {
-  border: 1px solid #111827;
-  background: #111827;
+  border: 1px solid #0f172a;
+  background: #0f172a;
   color: #fff;
 }
 
 .psa-action-reject {
-  border: 1px solid #e5e7eb;
+  border: 1px solid #d8dee8;
   background: #fff;
-  color: #111827;
+  color: #0f172a;
 }
 
 .psa-action-apply:disabled,
@@ -384,31 +599,59 @@
 .psa-composer {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 9px;
   border-top: 1px solid #e5e7eb;
 }
 
 .psa-textarea {
-  min-height: 44px;
+  min-height: 46px;
   flex: 1;
   resize: none;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #d8dee8;
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px 11px;
+  color: #0f172a;
   font: inherit;
+  line-height: 1.4;
+}
+
+.psa-textarea:focus {
+  border-color: #2563eb;
+  outline: 2px solid rgba(37, 99, 235, 0.16);
 }
 
 .psa-send {
-  height: 44px;
+  min-height: 46px;
   border: 0;
   border-radius: 8px;
-  background: #111827;
+  background: #0f172a;
   color: #fff;
-  padding: 0 14px;
+  padding: 0 15px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
   cursor: pointer;
 }
 
 .psa-send:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+@media (max-width: 560px) {
+  .psa-drawer {
+    right: 8px;
+    bottom: 84px;
+    width: calc(100vw - 16px);
+    height: min(720px, calc(100dvh - 100px));
+  }
+
+  .psa-message {
+    max-width: 94%;
+  }
+
+  .psa-chart-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
 }

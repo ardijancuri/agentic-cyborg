@@ -44,3 +44,7 @@ Handlers use transactions, whitelisted columns, row locks, bounded batch sizes, 
 ## Session Persistence
 
 The React drawer keeps the active `conversationId` and a small recent-message cache in local storage for fast refresh recovery. Full conversation history remains in PostgreSQL and is reloaded through `GET /api/assistant/conversations/:id` when available.
+
+## Charts And Readability
+
+Assistant responses can include compact `charts` for numeric statistics, product/category comparisons, order trends, and performance summaries. The shared React drawer renders bar, line, and donut charts without requiring an extra charting dependency, and it auto-scrolls to the newest answer.

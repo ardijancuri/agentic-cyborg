@@ -217,6 +217,7 @@ export class AssistantService {
         answer,
         citations: [],
         draftActions: [],
+        charts: [],
       };
     }
 
@@ -254,6 +255,7 @@ export class AssistantService {
       content: result.answer,
       metadata: {
         citations: result.citations,
+        charts: result.charts || [],
         provider: this.config.provider,
         model: this.config.model,
         providerResponseId: result.providerResponseId,
@@ -282,6 +284,7 @@ export class AssistantService {
       answer: result.answer,
       citations: result.citations,
       draftActions: savedDrafts.map(serializeDraftAction),
+      charts: result.charts || [],
     };
   }
 

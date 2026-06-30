@@ -13,10 +13,11 @@ It is designed to be installed as a private npm addon: `@oninova/personal-softwa
 - A generic Express router factory for host backends.
 - A standard role guard and read-only tool registry helper for project adapters.
 - Optional approved write-action registry support for user-reviewed business edits.
-- A generic React floating assistant drawer for host frontends.
+- A generic React floating assistant drawer for host frontends, with readable Markdown, chart rendering, and refresh-safe sessions.
 - A WooCommerce integration template with a WordPress plugin and central Node service runner.
 - An Argjira CRM adapter example and a Node/React/Postgres starter template.
 - Session persistence in the frontend drawer: only the active `conversationId` and a short recent-message cache are stored locally, while full history stays in the backend tables.
+- Compact chart specs in assistant responses for statistics, trends, product/category comparisons, and order performance.
 
 ## Core Idea
 
@@ -51,6 +52,7 @@ WooCommerce supports two install modes:
 - WordPress exposes `/wp-json/oninova-assistant/v1/*` endpoints for the admin drawer and signed tool callbacks.
 - WooCommerce data access stays inside the plugin through WooCommerce/WordPress APIs.
 - Read tools include order statistics, product/category comparisons, customer order preferences, and deterministic marketing campaign recommendations.
+- The admin chat drawer renders Markdown, reviewed action cards, and compact bar/line/donut charts for numeric statistics.
 - V1 write support includes reviewed single, itemized bulk, and category bulk product price/sale-price updates plus approved product detail fields.
 
 Plugin template:
