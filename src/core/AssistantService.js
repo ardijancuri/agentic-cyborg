@@ -2,6 +2,7 @@ import { readAssistantConfig } from './config.js';
 import { buildUnavailableAssistantMessage } from './promptBuilder.js';
 import { OpenAIResponsesProvider } from '../providers/OpenAIResponsesProvider.js';
 import { refreshAssistantContext } from '../context/contextRefresh.js';
+import { createAssistantCapabilityHarness } from './capabilityHarness.js';
 
 const serializeContextDocument = (doc) => ({
   id: doc.id,
@@ -59,6 +60,7 @@ export class AssistantService {
     pageRegistry = [],
     fallbackRoute = '/',
     writeActionRegistry = null,
+    capabilityHarness = null,
   } = {}) {
     if (!repository) {
       throw new Error('AssistantService requires a repository');
@@ -79,6 +81,10 @@ export class AssistantService {
     this.pageRegistry = pageRegistry;
     this.fallbackRoute = fallbackRoute;
     this.writeActionRegistry = writeActionRegistry;
+    this.capabilityHarness = capabilityHarness || createAssistantCapabilityHarness({
+      toolRegistry,
+      writeActionRegistry,
+    });
   }
 
   getStatus() {
@@ -117,6 +123,13 @@ export class AssistantService {
     return {
       status: this.getStatus(),
       documents: documents.map(serializeContextDocument),
+    };
+  }
+
+  getCapabilities() {
+    return {
+      status: this.getStatus(),
+      capabilities: this.capabilityHarness.listCapabilities(),
     };
   }
 
@@ -235,6 +248,7 @@ export class AssistantService {
       .filter((savedMessage) => savedMessage.id !== userMessage.id);
     const provider = this.createProvider();
 
+    const writeActions = this.capabilityHarness.listWriteDefinitions();
     const result = await provider.generate({
       message: cleanMessage,
       contextDocuments,
@@ -244,7 +258,7 @@ export class AssistantService {
       extraInstructions: this.extraInstructions,
       pageRegistry: this.pageRegistry,
       fallbackRoute: this.fallbackRoute,
-      writeActions: this.writeActionRegistry?.listDefinitions?.() || [],
+      writeActions,
       user,
       requestContext,
     });
@@ -270,10 +284,13 @@ export class AssistantService {
       });
     }
 
+    const decoratedDrafts = result.draftActions.map((action) => (
+      this.capabilityHarness.decorateDraftAction(action)
+    ));
     const savedDrafts = await this.repository.addDraftActions({
       conversationId: conversation.id,
       messageId: assistantMessage.id,
-      actions: result.draftActions,
+      actions: decoratedDrafts,
     });
 
     return {
@@ -288,8 +305,55 @@ export class AssistantService {
     };
   }
 
+  async previewDraftAction({ actionId, user, requestContext = {} }) {
+    if (!this.repository.getDraftActionForUser) {
+      const error = new Error('Assistant repository does not support draft actions');
+      error.status = 500;
+      throw error;
+    }
+
+    const action = await this.repository.getDraftActionForUser(actionId, user);
+    if (!action) {
+      const error = new Error('Draft action not found');
+      error.status = 404;
+      throw error;
+    }
+
+    if (action.status && !['draft', 'failed'].includes(action.status)) {
+      const error = new Error(`Draft action cannot be previewed from status: ${action.status}`);
+      error.status = 409;
+      throw error;
+    }
+
+    const context = { user, requestContext };
+    const preview = await this.capabilityHarness.previewWriteAction(action, context);
+    const capability = this.writeActionRegistry?.getDefinition?.(action.type)
+      || action.metadata?.capability
+      || null;
+
+    await this.auditLogger({
+      user,
+      requestContext,
+      module: 'assistant',
+      action: 'draft_action_preview',
+      targetType: 'assistant_draft_action',
+      targetId: action.id,
+      description: `Previewed assistant draft action ${action.type}`,
+      metadata: {
+        conversationId: action.conversation_id || action.conversationId,
+        affectedCount: preview.affectedCount,
+      },
+    });
+
+    return {
+      draftAction: serializeDraftAction(action),
+      capability,
+      preview,
+    };
+  }
+
   async applyDraftAction({ actionId, user, requestContext = {} }) {
-    if (!this.writeActionRegistry?.apply) {
+    if (!this.capabilityHarness?.executeWriteAction) {
       const error = new Error('Assistant write actions are not configured');
       error.status = 400;
       throw error;
@@ -314,13 +378,38 @@ export class AssistantService {
       throw error;
     }
 
+    const context = { user, requestContext };
+    await this.capabilityHarness.assertCanApply(action, context);
+
+    let claimedAction = action;
+    if (this.repository.transitionDraftActionStatus) {
+      claimedAction = await this.repository.transitionDraftActionStatus({
+        id: action.id,
+        fromStatuses: ['draft', 'failed'],
+        status: 'applying',
+        metadata: {
+          ...(action.metadata || {}),
+          applyingAt: new Date().toISOString(),
+          applyingBy: user?.id || null,
+        },
+      });
+      if (!claimedAction) {
+        const error = new Error('Draft action is already being processed');
+        error.status = 409;
+        throw error;
+      }
+    }
+
     try {
-      const result = await this.writeActionRegistry.apply(action, { user, requestContext });
+      const execution = await this.capabilityHarness.executeWriteAction(claimedAction, context);
+      const result = execution.result;
       const metadata = {
-        ...(action.metadata || {}),
+        ...(claimedAction.metadata || {}),
         appliedAt: new Date().toISOString(),
         appliedBy: user?.id || null,
         applyResult: result || {},
+        preview: execution.preview,
+        capability: execution.capability,
       };
       const saved = await this.repository.updateDraftActionStatus({
         id: action.id,
@@ -341,12 +430,12 @@ export class AssistantService {
 
       return { draftAction: serializeDraftAction(saved), result };
     } catch (error) {
-      if (error.status !== 403 && action?.id && this.repository.updateDraftActionStatus) {
+      if (action?.id && this.repository.updateDraftActionStatus) {
         await this.repository.updateDraftActionStatus({
           id: action.id,
           status: 'failed',
           metadata: {
-            ...(action.metadata || {}),
+            ...(claimedAction?.metadata || action.metadata || {}),
             failedAt: new Date().toISOString(),
             error: error.message,
           },
@@ -377,7 +466,7 @@ export class AssistantService {
       throw error;
     }
 
-    const saved = await this.repository.updateDraftActionStatus({
+    const update = {
       id: action.id,
       status: 'rejected',
       metadata: {
@@ -385,7 +474,19 @@ export class AssistantService {
         rejectedAt: new Date().toISOString(),
         rejectedBy: user?.id || null,
       },
-    });
+    };
+    const saved = this.repository.transitionDraftActionStatus
+      ? await this.repository.transitionDraftActionStatus({
+        ...update,
+        fromStatuses: ['draft', 'failed'],
+      })
+      : await this.repository.updateDraftActionStatus(update);
+
+    if (!saved) {
+      const error = new Error('Draft action is already being processed');
+      error.status = 409;
+      throw error;
+    }
 
     await this.auditLogger({
       user,

@@ -1,5 +1,5 @@
 import { buildSystemPrompt } from '../core/promptBuilder.js';
-import { validateDraftActions } from '../core/draftActions.js';
+import { ADVISORY_DRAFT_ACTION_TYPES, validateDraftActions } from '../core/draftActions.js';
 import { validateAssistantCharts } from '../core/charts.js';
 
 const OUTPUT_SCHEMA = {
@@ -184,6 +184,10 @@ export class OpenAIResponsesProvider {
       ...this.draftActionOptions,
       pageRegistry,
       fallbackRoute,
+      allowedTypes: [
+        ...ADVISORY_DRAFT_ACTION_TYPES,
+        ...writeActions.map((action) => action.type).filter(Boolean),
+      ],
     };
     const toolRuns = [];
     let inputItems = [

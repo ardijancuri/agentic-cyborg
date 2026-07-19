@@ -60,12 +60,24 @@ export const createAssistantRouter = ({
     res.json(await service.listContext());
   }));
 
+  router.get('/capabilities', wrapAsync(async (req, res) => {
+    res.json(await service.getCapabilities(getUser(req)));
+  }));
+
   router.post('/context/refresh', wrapAsync(async (req, res) => {
     res.json(await service.refreshContext(getUser(req), getRequestContext(req)));
   }));
 
   router.post('/draft-actions/:id/apply', wrapAsync(async (req, res) => {
     res.json(await service.applyDraftAction({
+      actionId: req.params.id,
+      user: getUser(req),
+      requestContext: getRequestContext(req),
+    }));
+  }));
+
+  router.post('/draft-actions/:id/preview', wrapAsync(async (req, res) => {
+    res.json(await service.previewDraftAction({
       actionId: req.params.id,
       user: getUser(req),
       requestContext: getRequestContext(req),

@@ -1,6 +1,6 @@
 import { resolveDraftActionRoute } from './pageRegistry.js';
 
-const DEFAULT_DRAFT_TYPES = new Set([
+export const ADVISORY_DRAFT_ACTION_TYPES = Object.freeze([
   'open_page',
   'review_record',
   'review_invoice',
@@ -8,6 +8,15 @@ const DEFAULT_DRAFT_TYPES = new Set([
   'review_stock',
   'review_purchase',
   'review_report',
+  'review_product',
+  'review_inventory',
+  'review_order',
+  'review_customer',
+  'review_coupon',
+  'operational_note',
+]);
+
+const LEGACY_WRITE_DRAFT_ACTION_TYPES = [
   'update_product_price',
   'bulk_update_product_prices',
   'bulk_update_product_prices_by_category',
@@ -20,7 +29,11 @@ const DEFAULT_DRAFT_TYPES = new Set([
   'update_woocommerce_product_details',
   'bulk_update_woocommerce_product_details',
   'bulk_update_woocommerce_category_product_details',
-  'operational_note',
+];
+
+const DEFAULT_DRAFT_TYPES = new Set([
+  ...ADVISORY_DRAFT_ACTION_TYPES,
+  ...LEGACY_WRITE_DRAFT_ACTION_TYPES,
 ]);
 
 const asString = (value, fallback = '') => {

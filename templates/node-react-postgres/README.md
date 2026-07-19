@@ -25,6 +25,7 @@ The starter includes parameterized read-only tools for:
 - product and category comparisons
 - customer order preferences
 - deterministic marketing campaign recommendations
+- product/category discovery with current price and inventory values for reviewed actions
 
 The SQL assumes common ecommerce-style tables such as `orders`, `order_items`, `products`, `categories`, `inventory_items`, and `invoices`. Adjust table and column names to the host app before production use.
 
@@ -41,6 +42,10 @@ The starter includes reviewed write handlers for:
 
 Handlers use transactions, whitelisted columns, row locks, bounded batch sizes, and `full_admin` access by default. Category bulk price/detail handlers resolve products from `categoryId` or `categoryName`, so the user does not need to list every product ID. Product detail fields are limited to `name`, `sku`, `description`, `shortDescription`, `status`, and `categoryId` unless the host app expands the whitelist.
 
+The refactored template also includes reviewed inventory actions for `quantity` and `reorderLevel`, plus set/increase/decrease/clear price operations. Every write definition supplies capability metadata and a read-only preview. The shared service atomically claims a draft as `applying` before execution and records the preview with the apply result.
+
+Host configuration can override `writeRoles` and `ASSISTANT_MAX_BULK_ITEMS`; keep the adapter's own hard limits at or below the host application's operational limit.
+
 ## Session Persistence
 
 The React drawer keeps the active `conversationId` and a small recent-message cache in local storage for fast refresh recovery. Full conversation history remains in PostgreSQL and is reloaded through `GET /api/assistant/conversations/:id` when available.
@@ -48,3 +53,5 @@ The React drawer keeps the active `conversationId` and a small recent-message ca
 ## Charts And Readability
 
 Assistant responses can include compact `charts` for numeric statistics, product/category comparisons, order trends, and performance summaries. The shared React drawer renders bar, line, and donut charts without requiring an extra charting dependency, and it auto-scrolls to the newest answer.
+
+Write cards call `POST /api/assistant/draft-actions/:id/preview` and require a fresh preview before enabling Apply.

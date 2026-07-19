@@ -74,14 +74,17 @@ app.use(createWooCommerceAssistantServiceRouter({
 }));
 ```
 
-## V1 Scope
+## Product Capability Scope
 
 - Read-only WooCommerce summaries, product/category lookup, order statistics, product/category comparisons, customer order preferences, and marketing campaign recommendations.
 - Compact bar, line, and donut charts for numeric statistics returned by the assistant.
 - Markdown context stored in WordPress custom tables.
 - Draft actions stored in WordPress custom tables.
-- Approved single, itemized bulk, and category bulk regular/sale price updates for simple products and variations. Itemized bulk drafts are limited to 50 explicitly listed items; category bulk drafts are limited to 100 resolved category items and do not require the user to list every product ID.
-- Approved single, itemized bulk, and category bulk product detail updates for `name`, `sku`, `shortDescription`, `description`, `status`, `featured`, and `catalogVisibility`.
+- Approved single, itemized bulk, and category bulk regular/sale price updates for simple products and variations. Operations include set, percentage/fixed increase or decrease, percentage-of-regular sale price, and sale-price clearing.
+- Approved catalog details include text/status/visibility, categories/tags, measurements, tax settings, purchase note, menu order, and virtual status where the product type supports them.
+- Approved inventory fields are `manageStock`, `stockQuantity`, `stockStatus`, `backorders`, and `lowStockAmount` at single, itemized bulk, or category scope.
+- Itemized drafts are limited to 50 explicit targets; category drafts are limited to 100 resolved targets.
+- Every write card must load a fresh server preview before Apply is enabled. Apply claims the action atomically and runs the prevalidated batch inside a WooCommerce database transaction.
 - The admin drawer restores the active conversation after page refresh using a small local session cache plus WordPress conversation history.
 - The admin drawer auto-scrolls to new answers and renders structured Markdown for easier scanning.
-- No stock writes, order status writes, customer edits, coupon edits, or sale schedules.
+- No product deletion, order status writes, customer edits, coupon edits, or sale schedules.

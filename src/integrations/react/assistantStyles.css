@@ -524,6 +524,30 @@
   font-weight: 800;
 }
 
+.psa-capability-badge,
+.psa-risk {
+  border: 1px solid #dbe3ec;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.psa-risk-high {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.psa-risk-medium {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .psa-status {
   border-radius: 999px;
   border: 1px solid #dfe5ee;
@@ -553,6 +577,44 @@
   color: #9a3412;
 }
 
+.psa-status-applying {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.psa-action-preview {
+  margin-top: 10px;
+  border: 1px solid #cbd5e1;
+  border-left: 3px solid #2563eb;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 9px 10px;
+  color: #334155;
+  font-size: 12px;
+}
+
+.psa-preview-summary {
+  color: #0f172a;
+  font-weight: 800;
+}
+
+.psa-preview-count {
+  margin-top: 3px;
+}
+
+.psa-preview-changes {
+  display: grid;
+  gap: 2px;
+  margin: 7px 0 0;
+  padding-left: 17px;
+}
+
+.psa-preview-warnings {
+  margin-top: 7px;
+  color: #9a3412;
+}
+
 .psa-link {
   display: inline-block;
   margin-top: 10px;
@@ -563,12 +625,14 @@
 
 .psa-draft-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
 }
 
 .psa-action-apply,
-.psa-action-reject {
+.psa-action-reject,
+.psa-action-preview-button {
   height: 34px;
   border-radius: 8px;
   padding: 0 12px;
@@ -576,6 +640,12 @@
   font-size: 12px;
   font-weight: 800;
   cursor: pointer;
+}
+
+.psa-action-preview-button {
+  border: 1px solid #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .psa-action-apply {
@@ -591,7 +661,8 @@
 }
 
 .psa-action-apply:disabled,
-.psa-action-reject:disabled {
+.psa-action-reject:disabled,
+.psa-action-preview-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }

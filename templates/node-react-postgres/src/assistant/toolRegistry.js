@@ -113,6 +113,125 @@ export const createProjectToolRegistry = ({ pool }) => {
         },
       },
       {
+        name: 'find_products',
+        title: 'Find products for review or editing',
+        resource: 'product',
+        description: 'Read-only product lookup with ids, category, prices, quantity, and reorder level for reviewed product actions.',
+        parameters: {
+          type: 'object',
+          properties: {
+            search: { type: 'string' },
+            limit: { type: 'integer', minimum: 1, maximum: 50 },
+          },
+          additionalProperties: false,
+        },
+        async handler({ search = '', limit = 10 } = {}) {
+          const safeLimit = clampToolLimit(limit, 10, 50);
+          const term = `%${String(search || '').trim()}%`;
+          const result = await pool.query(`
+            SELECT
+              p.id::text AS "productId",
+              p.name,
+              p.sku,
+              p.price,
+              p.sale_price AS "salePrice",
+              p.status,
+              p.category_id::text AS "categoryId",
+              c.name AS "categoryName",
+              i.quantity,
+              i.reorder_level AS "reorderLevel"
+            FROM products p
+            LEFT JOIN categories c ON c.id = p.category_id
+            LEFT JOIN inventory_items i ON i.product_id = p.id
+            WHERE p.name ILIKE $1 OR COALESCE(p.sku, '') ILIKE $1
+            ORDER BY p.name ASC
+            LIMIT $2
+          `, [term, safeLimit]);
+
+          return { search: String(search || ''), products: result.rows };
+        },
+      },
+      {
+        name: 'get_product_categories',
+        title: 'Find product categories',
+        resource: 'product_category',
+        description: 'Read-only product category lookup with product counts before category bulk actions.',
+        parameters: {
+          type: 'object',
+          properties: {
+            search: { type: 'string' },
+            limit: { type: 'integer', minimum: 1, maximum: 50 },
+          },
+          additionalProperties: false,
+        },
+        async handler({ search = '', limit = 20 } = {}) {
+          const safeLimit = clampToolLimit(limit, 20, 50);
+          const term = `%${String(search || '').trim()}%`;
+          const result = await pool.query(`
+            SELECT c.id::text AS "categoryId", c.name, COUNT(p.id)::int AS "productCount"
+            FROM categories c
+            LEFT JOIN products p ON p.category_id = c.id
+            WHERE c.name ILIKE $1
+            GROUP BY c.id, c.name
+            ORDER BY c.name ASC
+            LIMIT $2
+          `, [term, safeLimit]);
+
+          return { search: String(search || ''), categories: result.rows };
+        },
+      },
+      {
+        name: 'find_products_by_category',
+        title: 'Resolve category products',
+        resource: 'product',
+        description: 'Read-only bounded product list for one category with current prices and inventory values.',
+        parameters: {
+          type: 'object',
+          properties: {
+            categoryId: { type: 'string' },
+            categoryName: { type: 'string' },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+          },
+          additionalProperties: false,
+        },
+        async handler({ categoryId = '', categoryName = '', limit = 20 } = {}) {
+          if (!String(categoryId).trim() && !String(categoryName).trim()) {
+            const error = new Error('Category id or category name is required');
+            error.status = 400;
+            throw error;
+          }
+          const safeLimit = clampToolLimit(limit, 20, 100);
+          const result = await pool.query(`
+            SELECT
+              p.id::text AS "productId",
+              p.name,
+              p.sku,
+              p.price,
+              p.sale_price AS "salePrice",
+              p.status,
+              c.id::text AS "categoryId",
+              c.name AS "categoryName",
+              i.quantity,
+              i.reorder_level AS "reorderLevel"
+            FROM products p
+            JOIN categories c ON c.id = p.category_id
+            LEFT JOIN inventory_items i ON i.product_id = p.id
+            WHERE ($1 = '' OR c.id::text = $1)
+              AND ($2 = '' OR LOWER(c.name) = LOWER($2))
+            ORDER BY p.name ASC
+            LIMIT $3
+          `, [String(categoryId || ''), String(categoryName || ''), safeLimit + 1]);
+
+          return {
+            categoryId: categoryId || null,
+            categoryName: categoryName || null,
+            limit: safeLimit,
+            truncated: result.rows.length > safeLimit,
+            products: result.rows.slice(0, safeLimit),
+          };
+        },
+      },
+      {
         name: 'get_unpaid_invoices',
         description: 'Read-only list of unpaid invoices or order balances.',
         parameters: {

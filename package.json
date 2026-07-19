@@ -1,6 +1,6 @@
 {
   "name": "@oninova/personal-software-assistant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Reusable business AI assistant foundation for custom software, web apps, CRMs, CMSs, and websites.",
   "type": "module",
   "private": false,
@@ -12,6 +12,7 @@
     "sql",
     "examples",
     "templates",
+    "docs",
     "README.md",
     ".env.example"
   ],
@@ -27,6 +28,8 @@
     ".": "./src/index.js",
     "./adapters/read-only-tool-registry": "./src/adapters/readOnlyToolRegistry.js",
     "./core/write-action-registry": "./src/core/writeActionRegistry.js",
+    "./core/capability-harness": "./src/core/capabilityHarness.js",
+    "./products/mutations": "./src/products/productMutations.js",
     "./express": "./src/integrations/express/createAssistantRouter.js",
     "./express/role-access": "./src/integrations/express/roleAccess.js",
     "./react": "./src/integrations/react/AssistantButton.jsx",
@@ -34,6 +37,7 @@
     "./woocommerce": "./src/integrations/woocommerce/WooCommerceAssistantRunner.js",
     "./woocommerce/hmac": "./src/integrations/woocommerce/hmac.js",
     "./woocommerce/remote-tool-registry": "./src/integrations/woocommerce/remoteToolRegistry.js",
+    "./woocommerce/capabilities": "./src/integrations/woocommerce/capabilities.js",
     "./sql/postgres": "./sql/postgres/001_assistant_tables.sql",
     "./examples/argjira-crm/context-sources": "./examples/argjira-crm/contextSources.js",
     "./examples/argjira-crm/page-registry": "./examples/argjira-crm/pageRegistry.js",

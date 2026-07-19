@@ -1,5 +1,7 @@
 # Personal Software Assistant
 
+The reusable capability and reviewed-write contract is documented in [docs/capability-harness.md](docs/capability-harness.md).
+
 Reusable business AI assistant foundation for custom software, CRMs, CMSs, ecommerce sites, and web apps.
 
 This project is the portable home for the assistant that was first tested inside `crm-invoice-gold-services`.
@@ -12,7 +14,7 @@ It is designed to be installed as a private npm addon: `@oninova/personal-softwa
 - An OpenAI Responses API provider that uses approved function tools and structured draft actions.
 - A generic Express router factory for host backends.
 - A standard role guard and read-only tool registry helper for project adapters.
-- Optional approved write-action registry support for user-reviewed business edits.
+- A capability harness for role-aware tools, reviewed writes, server previews, batch limits, and auditable action state transitions.
 - A generic React floating assistant drawer for host frontends, with readable Markdown, chart rendering, and refresh-safe sessions.
 - A WooCommerce integration template with a WordPress plugin and central Node service runner.
 - An Argjira CRM adapter example and a Node/React/Postgres starter template.
@@ -27,8 +29,9 @@ Each host app provides:
 2. `toolRegistry`: approved read-only tools for that app's database.
 3. `contextSources`: functions that generate Markdown context documents from deterministic data.
 4. `pageRegistry`: the host app's real frontend pages/routes for draft action links.
-5. Optional `writeActionRegistry`: approved write handlers for reviewed actions like price edits.
-6. Auth/role checks from the host application.
+5. Optional `writeActionRegistry`: approved write handlers with resource, scope, risk, roles, limits, preview, and apply contracts.
+6. `capabilityHarness`: the shared manifest used by the prompt, API, audit trail, and UI.
+7. Auth/role checks from the host application.
 
 The assistant core handles:
 
@@ -36,7 +39,8 @@ The assistant core handles:
 - Markdown context storage
 - OpenAI tool orchestration
 - draft action validation
-- approved apply/reject state for write-capable draft actions
+- approved preview/apply/reject state for write-capable draft actions
+- atomic `draft -> applying -> applied|failed` transitions when the repository supports them
 - audit-friendly tool-run storage
 
 The model never executes raw SQL. It can only call tools exposed by the host adapter, and it cannot write to business tables directly. Write-capable actions are stored as draft cards and only run when the user clicks Apply.
@@ -53,7 +57,8 @@ WooCommerce supports two install modes:
 - WooCommerce data access stays inside the plugin through WooCommerce/WordPress APIs.
 - Read tools include order statistics, product/category comparisons, customer order preferences, and deterministic marketing campaign recommendations.
 - The admin chat drawer renders Markdown, reviewed action cards, and compact bar/line/donut charts for numeric statistics.
-- V1 write support includes reviewed single, itemized bulk, and category bulk product price/sale-price updates plus approved product detail fields.
+- Product write support includes reviewed single, itemized bulk, and category bulk prices, catalog details, and inventory settings.
+- The central service clamps site-supplied tools and writes to a package-owned WooCommerce capability allowlist.
 
 Plugin template:
 
@@ -123,6 +128,7 @@ import express from 'express';
 import { Pool } from 'pg';
 import {
   createAssistantRoleAuthorize,
+  createAssistantCapabilityHarness,
   createAssistantRouter,
   createAssistantService,
   createPostgresAssistantRepository,
@@ -137,18 +143,15 @@ import { createProjectAuditLogger } from './assistant/auditLogger.js';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const repository = createPostgresAssistantRepository({ pool });
 const toolRegistry = createProjectToolRegistry({ pool });
+const writeActionRegistry = createWriteActionRegistry({ actions: [] });
 
 const assistantService = createAssistantService({
   repository,
   toolRegistry,
   contextSources: createProjectContextSources(),
   pageRegistry: createProjectPageRegistry(),
-  writeActionRegistry: createWriteActionRegistry({
-    actions: [
-      // Host apps add reviewed write handlers here.
-      // Example: update_product_price -> update only the approved price column.
-    ],
-  }),
+  writeActionRegistry,
+  capabilityHarness: createAssistantCapabilityHarness({ toolRegistry, writeActionRegistry }),
   fallbackRoute: '/dashboard',
   config: readAssistantConfig(process.env),
   appName: 'Project Name',
@@ -174,8 +177,10 @@ const assistantApi = {
   getConversations: () => api.get('/assistant/conversations').then((res) => res.data),
   getConversation: (id) => api.get(`/assistant/conversations/${id}`).then((res) => res.data),
   getContext: () => api.get('/assistant/context').then((res) => res.data),
+  getCapabilities: () => api.get('/assistant/capabilities').then((res) => res.data),
   refreshContext: () => api.post('/assistant/context/refresh').then((res) => res.data),
   applyDraftAction: (id) => api.post(`/assistant/draft-actions/${id}/apply`).then((res) => res.data),
+  previewDraftAction: (id) => api.post(`/assistant/draft-actions/${id}/preview`).then((res) => res.data),
   rejectDraftAction: (id) => api.post(`/assistant/draft-actions/${id}/reject`).then((res) => res.data),
 };
 
@@ -189,7 +194,7 @@ const assistantApi = {
 
 ## Approved Write Actions
 
-Write actions are optional and project-specific. Each action has a stable `type`, a payload shape, allowed roles, and an `apply()` handler owned by the host app.
+Write actions are optional and project-specific. Each action has a stable `type`, resource/scope/risk metadata, a payload shape, allowed roles, a batch limit, a read-only `preview()` handler, and an `apply()` handler owned by the host app.
 
 ```js
 const writeActionRegistry = createWriteActionRegistry({
@@ -198,12 +203,19 @@ const writeActionRegistry = createWriteActionRegistry({
       type: 'update_product_price',
       handlerName: 'update_stock_item_price',
       description: 'Update one existing product/stock item price after full_admin approval.',
+      resource: 'product',
+      scope: 'single',
+      risk: 'medium',
+      maxBatchSize: 1,
       requiredRoles: ['full_admin'],
       payloadSchema: {
         type: 'object',
         required: ['stockItemId', 'currentPrice', 'newPrice', 'currency', 'reason'],
       },
-      apply: async ({ action, user, requestContext }) => {
+      preview: async ({ action, user, requestContext }) => {
+        // Resolve the current row and return exact before/after values without writing.
+      },
+      apply: async ({ action, preview, user, requestContext }) => {
         // Validate payload, check stale current price, update only the allowed price column,
         // then audit old price/new price/user/draft action id in the host application.
       },
@@ -250,6 +262,14 @@ Product detail write actions follow the same rule. Standard action names are:
 
 Host apps must whitelist editable fields and validate every change before saving. The Node/Postgres template includes a conservative example for `name`, `sku`, `description`, `shortDescription`, `status`, and `categoryId`.
 
+Inventory write actions use the same reviewed lifecycle:
+
+- `update_product_inventory`
+- `bulk_update_product_inventory`
+- `bulk_update_product_inventory_by_category`
+
+The Node/PostgreSQL template limits inventory fields to `quantity` and `reorderLevel`. WooCommerce additionally supports `manageStock`, `stockQuantity`, `stockStatus`, `backorders`, and `lowStockAmount` through WooCommerce CRUD APIs.
+
 ## Environment Variables
 
 ```env
@@ -258,6 +278,8 @@ ASSISTANT_PROVIDER=openai
 OPENAI_MODEL=gpt-5.4-mini
 OPENAI_API_KEY=
 ASSISTANT_MAX_TOOL_CALLS=4
+ASSISTANT_MAX_BULK_ITEMS=100
+ASSISTANT_ACTION_PREVIEW_LIMIT=20
 ```
 
 If `OPENAI_API_KEY` is missing, the assistant still mounts and stores history, but chat returns a controlled setup message.
@@ -271,7 +293,7 @@ If `OPENAI_API_KEY` is missing, the assistant still mounts and stores history, b
 - Generate Markdown context from stable business summaries.
 - Register real frontend routes in `pageRegistry`; draft actions are clamped to those routes.
 - Create draft action types that only guide users to existing screens.
-- Add write handlers only for narrow, reviewed updates. Keep each handler role-aware, transactional, and audited.
+- Add write handlers only for reviewed updates. Define resource, scope, risk, roles, batch limit, preview, validation, transaction, and audit behavior.
 - For ecommerce/CRM apps, add read tools for product performance, category comparison, order statistics, customer preferences, and marketing recommendations.
 - Add role checks before mounting `/api/assistant`.
 - Apply the assistant SQL schema in that app's database.

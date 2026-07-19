@@ -488,8 +488,53 @@
   color: #991b1b;
 }
 
+.psa-wc-status-applying {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.psa-wc-capability {
+  display: inline-block;
+  margin-top: 4px;
+  border: 1px solid #dbe3ec;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.psa-wc-risk-high {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.psa-wc-action-preview {
+  margin-top: 10px;
+  border: 1px solid #cbd5e1;
+  border-left: 3px solid #2563eb;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 9px 10px;
+  color: #334155;
+  font-size: 12px;
+}
+
+.psa-wc-action-preview ul {
+  margin: 7px 0 0 18px;
+}
+
+.psa-wc-preview-warning {
+  margin-top: 7px;
+  color: #9a3412;
+}
+
 .psa-wc-draft-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
 }

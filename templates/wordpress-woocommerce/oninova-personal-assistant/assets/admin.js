@@ -7,8 +7,11 @@
     'update_woocommerce_product_details',
     'bulk_update_woocommerce_product_details',
     'bulk_update_woocommerce_category_product_details',
+    'update_woocommerce_product_inventory',
+    'bulk_update_woocommerce_product_inventory',
+    'bulk_update_woocommerce_category_product_inventory',
   ]);
-  const closedStatuses = new Set(['applied', 'rejected']);
+  const closedStatuses = new Set(['applied', 'rejected', 'applying']);
   const sessionKey = 'psa-wc-assistant-session-v1';
   const sessionMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
 
@@ -37,6 +40,7 @@
     refreshing: false,
     conversationLoaded: false,
     actionBusy: {},
+    actionPreviews: {},
     error: '',
   };
 
@@ -511,9 +515,24 @@
 
   function renderDraft(action) {
     const status = action.status || 'draft';
-    const isWriteAction = writeActionTypes.has(action.type);
+    const capability = action.metadata && action.metadata.capability ? action.metadata.capability : {};
+    const isWriteAction = capability.mode === 'write' || writeActionTypes.has(action.type);
     const showActions = isWriteAction && !closedStatuses.has(status);
     const busy = state.actionBusy[action.id] || '';
+    const preview = state.actionPreviews[action.id];
+    const previewHtml = preview ? [
+      '<div class="psa-wc-action-preview">',
+      '<strong>', escapeHtml(preview.summary || 'Review changes'), '</strong>',
+      '<div>Affected records: <strong>', escapeHtml(preview.affectedCount), '</strong>',
+      preview.maxBatchSize ? ' / ' + escapeHtml(preview.maxBatchSize) : '', '</div>',
+      Array.isArray(preview.changes) && preview.changes.length ? '<ul>' + preview.changes.slice(0, 5).map(function (change, index) {
+        const label = change.name || ('Product ' + (change.productId || change.targetId || index + 1));
+        const price = change.priceField ? ': ' + change.priceField + ' ' + (change.oldPrice == null ? '' : change.oldPrice) + ' -> ' + (change.newPrice === '' || change.newPrice == null ? 'cleared' : change.newPrice) : '';
+        return '<li>' + escapeHtml(label + price) + '</li>';
+      }).join('') + '</ul>' : '',
+      Array.isArray(preview.warnings) && preview.warnings.length ? '<div class="psa-wc-preview-warning"><strong>Warnings:</strong> ' + escapeHtml(preview.warnings.join(' ')) + '</div>' : '',
+      '</div>',
+    ].join('') : '';
 
     return [
       '<div class="psa-wc-draft" data-action-id="', action.id, '">',
@@ -522,13 +541,19 @@
       '<p class="psa-wc-draft-reason">', escapeHtml(action.reason), '</p>',
       '</div><div>',
       isWriteAction ? '<span class="psa-wc-badge psa-wc-status-' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' : '',
+      capability.scope ? '<br><span class="psa-wc-capability">' + escapeHtml(capability.scope) + '</span>' : '',
+      capability.risk ? '<br><span class="psa-wc-capability psa-wc-risk-' + escapeHtml(capability.risk) + '">' + escapeHtml(capability.risk) + '</span>' : '',
       '<br><span class="psa-wc-badge">', Math.round((action.confidence || 0) * 100), '%</span>',
       '</div></div>',
       isWriteAction ? renderPayloadSummary(action) : '',
+      previewHtml,
       action.targetRoute ? '<a class="psa-wc-link" href="' + escapeHtml(action.targetRoute) + '">Open</a>' : '',
       showActions ? [
         '<div class="psa-wc-draft-actions">',
-        '<button type="button" class="button button-primary psa-wc-apply" ', (!config.canApply || busy ? 'disabled' : ''), '>',
+        '<button type="button" class="button psa-wc-preview" ', (!config.canApply || busy ? 'disabled' : ''), '>',
+        busy === 'preview' ? 'Preparing preview...' : 'Review changes',
+        '</button>',
+        '<button type="button" class="button button-primary psa-wc-apply" ', (!config.canApply || busy || !preview ? 'disabled title="Review the affected records before applying"' : ''), '>',
         busy === 'apply' ? 'Applying...' : 'Apply',
         '</button>',
         '<button type="button" class="button psa-wc-reject" ', (busy ? 'disabled' : ''), '>',
@@ -627,8 +652,10 @@
       const id = card.getAttribute('data-action-id');
       const action = state.draftActions.find(function (item) { return String(item.id) === String(id); });
       const apply = card.querySelector('.psa-wc-apply');
+      const preview = card.querySelector('.psa-wc-preview');
       const reject = card.querySelector('.psa-wc-reject');
       if (apply && action) apply.addEventListener('click', function () { applyAction(action); });
+      if (preview && action) preview.addEventListener('click', function () { previewAction(action); });
       if (reject && action) reject.addEventListener('click', function () { rejectAction(action); });
     });
   }
@@ -681,6 +708,7 @@
     state.loading = true;
     state.error = '';
     state.draftActions = [];
+    state.actionPreviews = {};
     state.messages.push({ role: 'user', content: clean });
     persistSession();
     render();
@@ -723,8 +751,23 @@
       persistSession();
     }).catch(function (error) {
       state.error = error.message;
-      replaceAction(Object.assign({}, action, { status: 'failed', metadata: { error: error.message } }));
+      replaceAction(Object.assign({}, action, { status: 'failed', metadata: Object.assign({}, action.metadata || {}, { error: error.message }) }));
       persistSession();
+    }).finally(function () {
+      delete state.actionBusy[action.id];
+      render();
+    });
+  }
+
+  function previewAction(action) {
+    state.actionBusy[action.id] = 'preview';
+    state.error = '';
+    render();
+    api('draft-actions/' + action.id + '/preview', { method: 'POST' }).then(function (payload) {
+      if (payload.draftAction) replaceAction(payload.draftAction);
+      if (payload.preview) state.actionPreviews[action.id] = payload.preview;
+    }).catch(function (error) {
+      state.error = error.message;
     }).finally(function () {
       delete state.actionBusy[action.id];
       render();

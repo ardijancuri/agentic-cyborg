@@ -21,5 +21,7 @@ export const readAssistantConfig = (env = process.env) => {
     apiKey,
     configured: enabled && provider === 'openai' && Boolean(apiKey),
     maxToolCalls: Math.max(1, Math.min(parseInt(env.ASSISTANT_MAX_TOOL_CALLS, 10) || 4, 8)),
+    maxBulkItems: Math.max(1, Math.min(parseInt(env.ASSISTANT_MAX_BULK_ITEMS, 10) || 100, 500)),
+    actionPreviewLimit: Math.max(1, Math.min(parseInt(env.ASSISTANT_ACTION_PREVIEW_LIMIT, 10) || 20, 50)),
   };
 };

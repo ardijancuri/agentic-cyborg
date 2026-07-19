@@ -209,6 +209,27 @@ export const createPostgresAssistantRepository = ({ pool, normalizeUserId = defa
       return result.rows[0] || null;
     },
 
+    async transitionDraftActionStatus({ id, fromStatuses = [], status, metadata = {} }) {
+      const allowedStatuses = [...new Set((Array.isArray(fromStatuses) ? fromStatuses : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean))];
+      if (allowedStatuses.length === 0) {
+        throw new Error('Draft action transition requires at least one source status');
+      }
+
+      const result = await pool.query(
+        `UPDATE assistant_draft_actions
+         SET status = $3,
+             metadata = $4
+         WHERE id = $1
+           AND status = ANY($2::text[])
+         RETURNING *`,
+        [id, allowedStatuses, status, safeJson(metadata)]
+      );
+
+      return result.rows[0] || null;
+    },
+
     async addToolRun({ conversationId, messageId = null, toolName, args = {}, resultSummary, status = 'completed', error = null, durationMs = null }) {
       const result = await pool.query(
         `INSERT INTO assistant_tool_runs (

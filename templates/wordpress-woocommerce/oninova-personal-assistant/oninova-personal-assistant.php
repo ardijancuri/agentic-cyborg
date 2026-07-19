@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Oninova Personal Assistant for WooCommerce
  * Description: Adds an approved AI assistant drawer for WooCommerce store operations.
- * Version: 0.1.3
+ * Version: 0.2.0
  * Author: Oninova
  * Requires Plugins: woocommerce
  */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('PSA_WC_ASSISTANT_VERSION', '0.1.3');
+define('PSA_WC_ASSISTANT_VERSION', '0.2.0');
 define('PSA_WC_ASSISTANT_REST_NAMESPACE', 'oninova-assistant/v1');
 define('PSA_WC_OPTION_MODE', 'psa_wc_assistant_mode');
 define('PSA_WC_OPTION_OPENAI_API_KEY', 'psa_wc_assistant_openai_api_key');
@@ -356,6 +356,18 @@ function psa_wc_assistant_register_rest_routes() {
         'permission_callback' => 'psa_wc_assistant_can_use',
     ));
 
+    register_rest_route(PSA_WC_ASSISTANT_REST_NAMESPACE, '/capabilities', array(
+        'methods' => WP_REST_Server::READABLE,
+        'callback' => 'psa_wc_assistant_rest_capabilities',
+        'permission_callback' => 'psa_wc_assistant_can_use',
+    ));
+
+    register_rest_route(PSA_WC_ASSISTANT_REST_NAMESPACE, '/draft-actions/(?P<id>\d+)/preview', array(
+        'methods' => WP_REST_Server::CREATABLE,
+        'callback' => 'psa_wc_assistant_rest_preview_draft_action',
+        'permission_callback' => 'psa_wc_assistant_can_use',
+    ));
+
     register_rest_route(PSA_WC_ASSISTANT_REST_NAMESPACE, '/draft-actions/(?P<id>\d+)/apply', array(
         'methods' => WP_REST_Server::CREATABLE,
         'callback' => 'psa_wc_assistant_rest_apply_draft_action',
@@ -624,6 +636,9 @@ function psa_wc_assistant_page_registry() {
                 'update_woocommerce_product_details',
                 'bulk_update_woocommerce_product_details',
                 'bulk_update_woocommerce_category_product_details',
+                'update_woocommerce_product_inventory',
+                'bulk_update_woocommerce_product_inventory',
+                'bulk_update_woocommerce_category_product_inventory',
             ),
             'keywords' => array('product', 'products', 'stock', 'inventory', 'price'),
         ),
@@ -661,23 +676,81 @@ function psa_wc_assistant_page_registry() {
     );
 }
 
-function psa_wc_assistant_write_actions() {
+function psa_wc_assistant_normalize_write_action($action) {
+    $type = isset($action['type']) ? sanitize_key($action['type']) : '';
+    $is_category = strpos($type, 'category') !== false;
+    $is_bulk = strpos($type, 'bulk') !== false;
+    $action['mode'] = 'write';
+    $action['resource'] = strpos($type, 'inventory') !== false ? 'inventory' : 'product';
+    $action['scope'] = $is_category ? 'category' : ($is_bulk ? 'selection' : 'single');
+    $action['risk'] = $is_bulk ? 'high' : 'medium';
+    $action['requiresReview'] = true;
+    $action['supportsPreview'] = true;
+    $action['maxBatchSize'] = $is_category ? 100 : ($is_bulk ? 50 : 1);
+    return $action;
+}
+
+function psa_wc_assistant_product_detail_fields_schema() {
     return array(
+        'type' => 'object',
+        'properties' => array(
+            'name' => array('type' => 'string'),
+            'sku' => array('type' => 'string'),
+            'shortDescription' => array('type' => 'string'),
+            'description' => array('type' => 'string'),
+            'status' => array('type' => 'string', 'enum' => array('publish', 'draft', 'pending', 'private')),
+            'featured' => array('type' => 'boolean'),
+            'catalogVisibility' => array('type' => 'string', 'enum' => array('visible', 'catalog', 'search', 'hidden')),
+            'categoryIds' => array('type' => 'array', 'items' => array('type' => 'integer')),
+            'tagIds' => array('type' => 'array', 'items' => array('type' => 'integer')),
+            'weight' => array('type' => 'string'),
+            'length' => array('type' => 'string'),
+            'width' => array('type' => 'string'),
+            'height' => array('type' => 'string'),
+            'taxStatus' => array('type' => 'string', 'enum' => array('taxable', 'shipping', 'none')),
+            'taxClass' => array('type' => 'string'),
+            'purchaseNote' => array('type' => 'string'),
+            'menuOrder' => array('type' => 'integer'),
+            'virtual' => array('type' => 'boolean'),
+        ),
+        'additionalProperties' => false,
+    );
+}
+
+function psa_wc_assistant_inventory_fields_schema() {
+    return array(
+        'type' => 'object',
+        'properties' => array(
+            'manageStock' => array('type' => 'boolean'),
+            'stockQuantity' => array('type' => 'integer', 'minimum' => 0),
+            'stockStatus' => array('type' => 'string', 'enum' => array('instock', 'outofstock', 'onbackorder')),
+            'backorders' => array('type' => 'string', 'enum' => array('no', 'notify', 'yes')),
+            'lowStockAmount' => array('type' => array('number', 'string', 'null')),
+        ),
+        'additionalProperties' => false,
+    );
+}
+
+function psa_wc_assistant_write_actions() {
+    $actions = array(
         array(
             'type' => 'update_woocommerce_product_price',
             'handlerName' => 'update_woocommerce_product_price',
             'title' => 'Update WooCommerce product price',
-            'description' => 'Update one simple product or variation regular_price/sale_price after WooCommerce manager approval.',
+            'description' => 'Set, increase, decrease, or clear one simple product/variation regular or sale price after preview and approval.',
             'requiredRoles' => array('manage_woocommerce'),
             'payloadSchema' => array(
                 'type' => 'object',
-                'required' => array('productId', 'variationId', 'priceField', 'currentPrice', 'newPrice', 'currency', 'reason'),
+                'required' => array('productId', 'variationId', 'priceField', 'currentPrice', 'operation', 'currency', 'reason'),
                 'properties' => array(
                     'productId' => array('type' => 'integer'),
                     'variationId' => array('type' => array('integer', 'null')),
                     'priceField' => array('type' => 'string', 'enum' => array('regular_price', 'sale_price')),
                     'currentPrice' => array('type' => 'string'),
                     'newPrice' => array('type' => 'string'),
+                    'amount' => array('type' => 'number'),
+                    'percent' => array('type' => 'number'),
+                    'operation' => array('type' => 'string', 'enum' => array('set', 'increase_percent', 'decrease_percent', 'increase_fixed', 'decrease_fixed', 'set_percent_of_regular_price', 'clear')),
                     'currency' => array('type' => 'string'),
                     'reason' => array('type' => 'string'),
                 ),
@@ -688,13 +761,17 @@ function psa_wc_assistant_write_actions() {
             'type' => 'bulk_update_woocommerce_product_prices',
             'handlerName' => 'bulk_update_woocommerce_product_prices',
             'title' => 'Bulk update WooCommerce product prices',
-            'description' => 'Update regular_price or sale_price for a bounded list of simple products or variations after WooCommerce manager approval.',
+            'description' => 'Set, increase, decrease, or clear regular/sale prices for a bounded product or variation list after preview and approval.',
             'requiredRoles' => array('manage_woocommerce'),
             'payloadSchema' => array(
                 'type' => 'object',
                 'required' => array('items', 'currency', 'reason'),
                 'properties' => array(
                     'priceField' => array('type' => 'string', 'enum' => array('regular_price', 'sale_price')),
+                    'operation' => array('type' => 'string', 'enum' => array('set', 'increase_percent', 'decrease_percent', 'increase_fixed', 'decrease_fixed', 'set_percent_of_regular_price', 'clear')),
+                    'newPrice' => array('type' => 'string'),
+                    'amount' => array('type' => 'number'),
+                    'percent' => array('type' => 'number'),
                     'currency' => array('type' => 'string'),
                     'reason' => array('type' => 'string'),
                     'items' => array(
@@ -710,6 +787,9 @@ function psa_wc_assistant_write_actions() {
                                 'priceField' => array('type' => 'string', 'enum' => array('regular_price', 'sale_price')),
                                 'currentPrice' => array('type' => 'string'),
                                 'newPrice' => array('type' => 'string'),
+                                'amount' => array('type' => 'number'),
+                                'percent' => array('type' => 'number'),
+                                'operation' => array('type' => 'string', 'enum' => array('set', 'increase_percent', 'decrease_percent', 'increase_fixed', 'decrease_fixed', 'set_percent_of_regular_price', 'clear')),
                             ),
                             'additionalProperties' => false,
                         ),
@@ -732,9 +812,10 @@ function psa_wc_assistant_write_actions() {
                     'categorySlug' => array('type' => 'string'),
                     'categoryName' => array('type' => 'string'),
                     'priceField' => array('type' => 'string', 'enum' => array('regular_price', 'sale_price')),
-                    'operation' => array('type' => 'string', 'enum' => array('set_fixed', 'decrease_percent', 'increase_percent', 'set_percent_of_regular_price', 'clear_sale_price')),
+                    'operation' => array('type' => 'string', 'enum' => array('set', 'set_fixed', 'decrease_percent', 'increase_percent', 'increase_fixed', 'decrease_fixed', 'set_percent_of_regular_price', 'clear', 'clear_sale_price')),
                     'newPrice' => array('type' => 'string'),
                     'percent' => array('type' => 'number'),
+                    'amount' => array('type' => 'number'),
                     'includeVariations' => array('type' => 'boolean'),
                     'maxItems' => array('type' => 'integer', 'minimum' => 1, 'maximum' => 100),
                     'currency' => array('type' => 'string'),
@@ -755,7 +836,7 @@ function psa_wc_assistant_write_actions() {
                 'properties' => array(
                     'productId' => array('type' => 'integer'),
                     'variationId' => array('type' => array('integer', 'null')),
-                    'fields' => array('type' => 'object', 'additionalProperties' => true),
+                    'fields' => psa_wc_assistant_product_detail_fields_schema(),
                     'currentValues' => array('type' => 'object', 'additionalProperties' => true),
                     'reason' => array('type' => 'string'),
                 ),
@@ -791,7 +872,63 @@ function psa_wc_assistant_write_actions() {
                     'categoryId' => array('type' => 'integer'),
                     'categorySlug' => array('type' => 'string'),
                     'categoryName' => array('type' => 'string'),
-                    'fields' => array('type' => 'object', 'additionalProperties' => true),
+                    'fields' => psa_wc_assistant_product_detail_fields_schema(),
+                    'includeVariations' => array('type' => 'boolean'),
+                    'maxItems' => array('type' => 'integer', 'minimum' => 1, 'maximum' => 100),
+                    'reason' => array('type' => 'string'),
+                ),
+                'additionalProperties' => false,
+            ),
+        ),
+        array(
+            'type' => 'update_woocommerce_product_inventory',
+            'handlerName' => 'update_woocommerce_product_inventory',
+            'title' => 'Update WooCommerce product inventory',
+            'description' => 'Update approved stock fields for one simple product or variation after preview and approval.',
+            'requiredRoles' => array('manage_woocommerce'),
+            'payloadSchema' => array(
+                'type' => 'object',
+                'required' => array('productId', 'fields', 'reason'),
+                'properties' => array(
+                    'productId' => array('type' => 'integer'),
+                    'variationId' => array('type' => array('integer', 'null')),
+                    'fields' => psa_wc_assistant_inventory_fields_schema(),
+                    'currentValues' => array('type' => 'object', 'additionalProperties' => true),
+                    'reason' => array('type' => 'string'),
+                ),
+                'additionalProperties' => false,
+            ),
+        ),
+        array(
+            'type' => 'bulk_update_woocommerce_product_inventory',
+            'handlerName' => 'bulk_update_woocommerce_product_inventory',
+            'title' => 'Bulk update WooCommerce product inventory',
+            'description' => 'Update approved stock fields for an explicit list of up to 50 products or variations.',
+            'requiredRoles' => array('manage_woocommerce'),
+            'payloadSchema' => array(
+                'type' => 'object',
+                'required' => array('items', 'reason'),
+                'properties' => array(
+                    'items' => array('type' => 'array', 'minItems' => 1, 'maxItems' => 50),
+                    'reason' => array('type' => 'string'),
+                ),
+                'additionalProperties' => false,
+            ),
+        ),
+        array(
+            'type' => 'bulk_update_woocommerce_category_product_inventory',
+            'handlerName' => 'bulk_update_woocommerce_category_product_inventory',
+            'title' => 'Bulk update WooCommerce category inventory',
+            'description' => 'Update approved stock fields for all supported products or variations in one category.',
+            'requiredRoles' => array('manage_woocommerce'),
+            'payloadSchema' => array(
+                'type' => 'object',
+                'required' => array('fields', 'maxItems', 'reason'),
+                'properties' => array(
+                    'categoryId' => array('type' => 'integer'),
+                    'categorySlug' => array('type' => 'string'),
+                    'categoryName' => array('type' => 'string'),
+                    'fields' => psa_wc_assistant_inventory_fields_schema(),
                     'includeVariations' => array('type' => 'boolean'),
                     'maxItems' => array('type' => 'integer', 'minimum' => 1, 'maximum' => 100),
                     'reason' => array('type' => 'string'),
@@ -800,6 +937,17 @@ function psa_wc_assistant_write_actions() {
             ),
         ),
     );
+
+    return array_map('psa_wc_assistant_normalize_write_action', $actions);
+}
+
+function psa_wc_assistant_write_action_definition($type) {
+    foreach (psa_wc_assistant_write_actions() as $definition) {
+        if (isset($definition['type']) && $definition['type'] === $type) {
+            return $definition;
+        }
+    }
+    return null;
 }
 
 function psa_wc_assistant_make_title($message) {
@@ -1070,10 +1218,16 @@ function psa_wc_assistant_add_draft_actions($conversation_id, $message_id, $acti
     $now = psa_wc_assistant_now();
 
     foreach ((array) $actions as $action) {
+        $type = sanitize_key(isset($action['type']) ? $action['type'] : 'operational_note');
+        $definition = psa_wc_assistant_write_action_definition($type);
+        $metadata = isset($action['metadata']) && is_array($action['metadata']) ? $action['metadata'] : array();
+        if ($definition) {
+            $metadata['capability'] = $definition;
+        }
         $wpdb->insert($table, array(
             'conversation_id' => $conversation_id,
             'message_id' => $message_id,
-            'type' => sanitize_key(isset($action['type']) ? $action['type'] : 'operational_note'),
+            'type' => $type,
             'title' => sanitize_text_field(isset($action['title']) ? $action['title'] : ''),
             'reason' => sanitize_textarea_field(isset($action['reason']) ? $action['reason'] : ''),
             'target_route' => esc_url_raw(isset($action['targetRoute']) ? $action['targetRoute'] : ''),
@@ -1081,7 +1235,7 @@ function psa_wc_assistant_add_draft_actions($conversation_id, $message_id, $acti
             'confidence' => isset($action['confidence']) ? (float) $action['confidence'] : 0,
             'requires_user_review' => 1,
             'status' => 'draft',
-            'metadata' => psa_wc_json_encode(array()),
+            'metadata' => psa_wc_json_encode($metadata),
             'created_at' => $now,
         ));
         $saved[] = psa_wc_assistant_get_draft_action((int) $wpdb->insert_id);
@@ -2137,6 +2291,14 @@ function psa_wc_assistant_format_write_actions($actions) {
         if (!empty($action['description'])) {
             $details[] = $action['description'];
         }
+        foreach (array('resource', 'scope', 'risk') as $field) {
+            if (!empty($action[$field])) {
+                $details[] = $field . ': ' . $action[$field];
+            }
+        }
+        if (!empty($action['maxBatchSize'])) {
+            $details[] = 'maximum records: ' . (int) $action['maxBatchSize'];
+        }
         if (!empty($action['handlerName'])) {
             $details[] = 'handler: ' . $action['handlerName'];
         }
@@ -2146,6 +2308,7 @@ function psa_wc_assistant_format_write_actions($actions) {
         if (!empty($action['payloadSchema'])) {
             $details[] = 'payload schema: ' . wp_json_encode($action['payloadSchema']);
         }
+        $details[] = 'requires explicit review and supports a server-generated preview';
         $lines[] = '- ' . $action['type'] . (count($details) ? ' (' . implode('; ', $details) . ')' : '');
     }
     return count($lines) ? implode("\n", $lines) : '- none';
@@ -2172,14 +2335,15 @@ function psa_wc_assistant_build_system_prompt($payload) {
         '- Never invent WooCommerce values. If a number is unavailable, say what should be checked.',
         '- When the user asks for statistics, orders, products, categories, comparisons, trends, or performance and numeric data is available, include up to two compact charts in charts[]. Use only tool/context numbers; otherwise return charts: [].',
         '- Never claim that you changed product data unless a separate user-approved apply action succeeds.',
-        '- Draft actions are suggestions only and always require manual user review.',
+        '- Draft actions are suggestions only. A fresh server preview and manual user review are required before every write.',
         '- Draft action targetRoute must exactly match one registered wp-admin route below. Do not invent routes, query params, record URLs, or external links.',
-        '- For one product price edit, propose update_woocommerce_product_price only when productId, currentPrice, priceField, and currency are known from tools/context.',
-        '- For itemized bulk product price edits, propose bulk_update_woocommerce_product_prices only when every affected product or variation is explicitly listed with productId, currentPrice, newPrice, currency, and priceField.',
+        '- For one product price edit, propose update_woocommerce_product_price only when productId, currentPrice, priceField, operation, and currency are known from tools/context.',
+        '- For itemized bulk product price edits, propose bulk_update_woocommerce_product_prices only when every affected product or variation is explicitly listed with productId, currentPrice, operation, currency, and priceField.',
         '- For category-wide product price edits, do not ask for individual product IDs when a category is named. Use get_product_categories and find_products_by_category when useful, then propose bulk_update_woocommerce_category_product_prices with categoryId/categorySlug/categoryName, priceField, operation, currency, reason, includeVariations, and maxItems.',
-        '- Category bulk price operations allowed: set_fixed, decrease_percent, increase_percent, set_percent_of_regular_price, clear_sale_price. Use clear_sale_price only for sale_price.',
-        '- For product detail edits, only propose update_woocommerce_product_details, bulk_update_woocommerce_product_details, or bulk_update_woocommerce_category_product_details for approved fields: name, sku, shortDescription, description, status, featured, catalogVisibility.',
-        '- V1 does not support stock writes, order status writes, customer edits, coupon edits, or sale schedules.',
+        '- Price operations may set, increase, decrease, set a sale percentage of regular price, or clear sale prices when the registered schema allows it.',
+        '- For product detail edits, use only fields exposed in the registered schema, including approved catalog text/status, categories/tags, measurements, tax settings, menu order, and virtual status.',
+        '- For inventory edits, use only the registered single, explicit-bulk, or category inventory actions and approved fields: manageStock, stockQuantity, stockStatus, backorders, lowStockAmount.',
+        '- Never propose order status writes, customer edits, coupon edits, destructive product deletion, or sale schedules.',
         '- Do not ask for raw SQL and do not produce SQL for execution.',
         '',
         'Application locale: ' . $locale,
@@ -2431,7 +2595,7 @@ function psa_wc_assistant_clamp_route($action, $fallback_route) {
 }
 
 function psa_wc_assistant_validate_direct_draft_actions($actions, $fallback_route) {
-    $allowed = array(
+    $allowed = array_merge(array(
         'open_page',
         'operational_note',
         'review_order',
@@ -2441,13 +2605,9 @@ function psa_wc_assistant_validate_direct_draft_actions($actions, $fallback_rout
         'follow_up_client',
         'review_customer',
         'review_coupon',
-        'update_woocommerce_product_price',
-        'bulk_update_woocommerce_product_prices',
-        'bulk_update_woocommerce_category_product_prices',
-        'update_woocommerce_product_details',
-        'bulk_update_woocommerce_product_details',
-        'bulk_update_woocommerce_category_product_details',
-    );
+    ), array_map(function ($definition) {
+        return $definition['type'];
+    }, psa_wc_assistant_write_actions()));
     $validated = array();
 
     foreach (array_slice(is_array($actions) ? $actions : array(), 0, 6) as $action) {
@@ -2751,6 +2911,25 @@ function psa_wc_assistant_rest_context_refresh() {
     ));
 }
 
+function psa_wc_assistant_rest_capabilities() {
+    return rest_ensure_response(array(
+        'status' => psa_wc_assistant_status_payload(),
+        'capabilities' => array(
+            'read' => array_map(function ($tool) {
+                return array(
+                    'mode' => 'read',
+                    'name' => $tool['name'],
+                    'title' => $tool['name'],
+                    'description' => isset($tool['description']) ? $tool['description'] : '',
+                    'resource' => strpos($tool['name'], 'product') !== false ? 'product' : 'business_data',
+                    'risk' => 'low',
+                );
+            }, psa_wc_assistant_tool_definitions()),
+            'write' => psa_wc_assistant_write_actions(),
+        ),
+    ));
+}
+
 function psa_wc_assistant_prices_match($current_price, $expected_price) {
     $current = $current_price === '' ? '' : wc_format_decimal($current_price);
     $expected = $expected_price === '' ? '' : wc_format_decimal($expected_price);
@@ -2772,13 +2951,19 @@ function psa_wc_assistant_prepare_price_update($item, $defaults = array()) {
     $currency = isset($item['currency']) && $item['currency'] !== ''
         ? sanitize_text_field($item['currency'])
         : sanitize_text_field(isset($defaults['currency']) ? $defaults['currency'] : '');
+    $operation = isset($item['operation']) && $item['operation'] !== ''
+        ? sanitize_key($item['operation'])
+        : sanitize_key(isset($defaults['operation']) ? $defaults['operation'] : '');
+    if ($operation === '' && array_key_exists('newPrice', $item)) {
+        $operation = 'set';
+    }
 
     if (!$product_id || !in_array($price_field, array('regular_price', 'sale_price'), true)) {
         return new WP_Error('invalid_price_action', 'Invalid product price action payload.', array('status' => 400));
     }
 
-    if (!array_key_exists('currentPrice', $item) || !array_key_exists('newPrice', $item)) {
-        return new WP_Error('invalid_price_action', 'Price action requires currentPrice and newPrice for every product.', array('status' => 400));
+    if (!array_key_exists('currentPrice', $item) || $operation === '') {
+        return new WP_Error('invalid_price_action', 'Price action requires currentPrice and operation for every product.', array('status' => 400));
     }
 
     if ($currency && function_exists('get_woocommerce_currency') && $currency !== get_woocommerce_currency()) {
@@ -2801,21 +2986,15 @@ function psa_wc_assistant_prepare_price_update($item, $defaults = array()) {
 
     $current_price = $price_field === 'regular_price' ? $product->get_regular_price('edit') : $product->get_sale_price('edit');
     $expected_price = (string) $item['currentPrice'];
-    $new_price = wc_format_decimal($item['newPrice']);
-
-    if ($new_price === '' || (float) $new_price <= 0) {
-        return new WP_Error('invalid_new_price', 'New price must be greater than 0.', array('status' => 400));
-    }
 
     if (!psa_wc_assistant_prices_match((string) $current_price, $expected_price)) {
         return new WP_Error('stale_price', 'Product price changed since this action was drafted.', array('status' => 409));
     }
 
-    if ($price_field === 'sale_price') {
-        $regular_price = $product->get_regular_price('edit');
-        if ($regular_price !== '' && (float) $new_price > (float) $regular_price) {
-            return new WP_Error('invalid_sale_price', 'Sale price cannot be greater than the regular price.', array('status' => 400));
-        }
+    $mutation_payload = array_merge($defaults, $item);
+    $new_price = psa_wc_assistant_calculate_category_price($product, $price_field, $operation, $mutation_payload);
+    if (is_wp_error($new_price)) {
+        return $new_price;
     }
 
     return array(
@@ -2825,6 +3004,7 @@ function psa_wc_assistant_prepare_price_update($item, $defaults = array()) {
             'variationId' => $variation_id ? $variation_id : null,
             'targetId' => $target_id,
             'priceField' => $price_field,
+            'operation' => $operation,
             'oldPrice' => (string) $current_price,
             'newPrice' => (string) $new_price,
             'currency' => function_exists('get_woocommerce_currency') ? get_woocommerce_currency() : $currency,
@@ -2846,17 +3026,17 @@ function psa_wc_assistant_save_prepared_price_update($prepared) {
     return $result;
 }
 
-function psa_wc_assistant_apply_price_action($action) {
+function psa_wc_assistant_apply_price_action($action, $dry_run = false) {
     $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
     $prepared = psa_wc_assistant_prepare_price_update($payload, array());
     if (is_wp_error($prepared)) {
         return $prepared;
     }
 
-    return psa_wc_assistant_save_prepared_price_update($prepared);
+    return $dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_price_update($prepared);
 }
 
-function psa_wc_assistant_apply_bulk_price_action($action) {
+function psa_wc_assistant_apply_bulk_price_action($action, $dry_run = false) {
     $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
     $items = isset($payload['items']) && is_array($payload['items']) ? $payload['items'] : array();
     $count = count($items);
@@ -2868,6 +3048,10 @@ function psa_wc_assistant_apply_bulk_price_action($action) {
     $defaults = array(
         'priceField' => isset($payload['priceField']) ? sanitize_key($payload['priceField']) : '',
         'currency' => isset($payload['currency']) ? sanitize_text_field($payload['currency']) : '',
+        'operation' => isset($payload['operation']) ? sanitize_key($payload['operation']) : '',
+        'newPrice' => isset($payload['newPrice']) ? $payload['newPrice'] : null,
+        'amount' => isset($payload['amount']) ? $payload['amount'] : null,
+        'percent' => isset($payload['percent']) ? $payload['percent'] : null,
     );
     $seen = array();
     $prepared_updates = array();
@@ -2889,7 +3073,7 @@ function psa_wc_assistant_apply_bulk_price_action($action) {
 
     $results = array();
     foreach ($prepared_updates as $prepared) {
-        $results[] = psa_wc_assistant_save_prepared_price_update($prepared);
+        $results[] = $dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_price_update($prepared);
     }
 
     return array(
@@ -2907,6 +3091,12 @@ function psa_wc_assistant_calculate_category_price($product, $price_field, $oper
         ? $product->get_regular_price('edit')
         : $product->get_sale_price('edit');
 
+    if ($operation === 'set') {
+        $operation = 'set_fixed';
+    } elseif ($operation === 'clear') {
+        $operation = 'clear_sale_price';
+    }
+
     if ($operation === 'clear_sale_price') {
         if ($price_field !== 'sale_price') {
             return new WP_Error('invalid_category_price_operation', 'clear_sale_price can only be used with sale_price.', array('status' => 400));
@@ -2916,6 +3106,15 @@ function psa_wc_assistant_calculate_category_price($product, $price_field, $oper
 
     if ($operation === 'set_fixed') {
         $new_price = isset($payload['newPrice']) ? wc_format_decimal($payload['newPrice'], $decimals) : '';
+    } elseif (in_array($operation, array('increase_fixed', 'decrease_fixed'), true)) {
+        $amount = isset($payload['amount']) ? (float) $payload['amount'] : 0;
+        $base_price = $current_price === '' && $price_field === 'sale_price' ? $regular_price : $current_price;
+        if ($amount <= 0 || $base_price === '') {
+            return new WP_Error('invalid_category_price_amount', 'A fixed adjustment and current price are required.', array('status' => 400));
+        }
+        $new_price = $operation === 'increase_fixed'
+            ? wc_format_decimal(((float) $base_price) + $amount, $decimals)
+            : wc_format_decimal(((float) $base_price) - $amount, $decimals);
     } else {
         $percent = isset($payload['percent']) ? (float) $payload['percent'] : 0;
         if ($percent <= 0 || $percent > 100) {
@@ -2979,7 +3178,7 @@ function psa_wc_assistant_prepare_category_price_update($product, $price_field, 
     );
 }
 
-function psa_wc_assistant_apply_category_price_action($action) {
+function psa_wc_assistant_apply_category_price_action($action, $dry_run = false) {
     $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
     $term = psa_wc_assistant_resolve_product_category($payload);
     if (is_wp_error($term)) {
@@ -2996,7 +3195,7 @@ function psa_wc_assistant_apply_category_price_action($action) {
         return new WP_Error('invalid_category_price_field', 'Invalid category price field.', array('status' => 400));
     }
 
-    if (!in_array($operation, array('set_fixed', 'decrease_percent', 'increase_percent', 'set_percent_of_regular_price', 'clear_sale_price'), true)) {
+    if (!in_array($operation, array('set', 'set_fixed', 'decrease_percent', 'increase_percent', 'increase_fixed', 'decrease_fixed', 'set_percent_of_regular_price', 'clear', 'clear_sale_price'), true)) {
         return new WP_Error('invalid_category_price_operation', 'Invalid category price operation.', array('status' => 400));
     }
 
@@ -3024,7 +3223,7 @@ function psa_wc_assistant_apply_category_price_action($action) {
 
     $results = array();
     foreach ($prepared_updates as $prepared) {
-        $results[] = psa_wc_assistant_save_prepared_price_update($prepared);
+        $results[] = $dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_price_update($prepared);
     }
 
     return array(
@@ -3039,8 +3238,28 @@ function psa_wc_assistant_apply_category_price_action($action) {
     );
 }
 
+function psa_wc_assistant_values_match($actual, $expected) {
+    if (is_array($actual) || is_array($expected)) {
+        $actual_values = is_array($actual) ? array_values($actual) : array($actual);
+        $expected_values = is_array($expected) ? array_values($expected) : array($expected);
+        sort($actual_values);
+        sort($expected_values);
+        return wp_json_encode($actual_values) === wp_json_encode($expected_values);
+    }
+
+    if (is_bool($actual) || is_bool($expected)) {
+        return (bool) $actual === (bool) $expected;
+    }
+
+    return (string) $actual === (string) $expected;
+}
+
 function psa_wc_assistant_allowed_detail_fields() {
-    return array('name', 'sku', 'shortDescription', 'description', 'status', 'featured', 'catalogVisibility');
+    return array(
+        'name', 'sku', 'shortDescription', 'description', 'status', 'featured', 'catalogVisibility',
+        'categoryIds', 'tagIds', 'weight', 'length', 'width', 'height', 'taxStatus', 'taxClass',
+        'purchaseNote', 'menuOrder', 'virtual'
+    );
 }
 
 function psa_wc_assistant_current_detail_value($product, $field) {
@@ -3059,6 +3278,28 @@ function psa_wc_assistant_current_detail_value($product, $field) {
             return method_exists($product, 'get_featured') ? (bool) $product->get_featured('edit') : false;
         case 'catalogVisibility':
             return method_exists($product, 'get_catalog_visibility') ? $product->get_catalog_visibility('edit') : '';
+        case 'categoryIds':
+            return method_exists($product, 'get_category_ids') ? array_map('intval', $product->get_category_ids('edit')) : array();
+        case 'tagIds':
+            return method_exists($product, 'get_tag_ids') ? array_map('intval', $product->get_tag_ids('edit')) : array();
+        case 'weight':
+            return method_exists($product, 'get_weight') ? $product->get_weight('edit') : '';
+        case 'length':
+            return method_exists($product, 'get_length') ? $product->get_length('edit') : '';
+        case 'width':
+            return method_exists($product, 'get_width') ? $product->get_width('edit') : '';
+        case 'height':
+            return method_exists($product, 'get_height') ? $product->get_height('edit') : '';
+        case 'taxStatus':
+            return method_exists($product, 'get_tax_status') ? $product->get_tax_status('edit') : '';
+        case 'taxClass':
+            return method_exists($product, 'get_tax_class') ? $product->get_tax_class('edit') : '';
+        case 'purchaseNote':
+            return method_exists($product, 'get_purchase_note') ? $product->get_purchase_note('edit') : '';
+        case 'menuOrder':
+            return method_exists($product, 'get_menu_order') ? (int) $product->get_menu_order('edit') : 0;
+        case 'virtual':
+            return method_exists($product, 'get_virtual') ? (bool) $product->get_virtual('edit') : false;
         default:
             return null;
     }
@@ -3074,7 +3315,7 @@ function psa_wc_assistant_normalize_detail_fields($fields) {
             return new WP_Error('unsupported_product_detail_field', 'Unsupported product detail field: ' . sanitize_key($field), array('status' => 400));
         }
 
-        if (in_array($field, array('name', 'sku', 'shortDescription', 'description'), true)) {
+        if (in_array($field, array('name', 'sku', 'shortDescription', 'description', 'purchaseNote'), true)) {
             $normalized[$field] = sanitize_textarea_field((string) $value);
         } elseif ($field === 'status') {
             $status = sanitize_key($value);
@@ -3090,6 +3331,33 @@ function psa_wc_assistant_normalize_detail_fields($fields) {
                 return new WP_Error('invalid_catalog_visibility', 'Invalid catalog visibility.', array('status' => 400));
             }
             $normalized[$field] = $visibility;
+        } elseif (in_array($field, array('categoryIds', 'tagIds'), true)) {
+            $ids = array_values(array_unique(array_filter(array_map('absint', is_array($value) ? $value : array()))));
+            $taxonomy = $field === 'categoryIds' ? 'product_cat' : 'product_tag';
+            foreach ($ids as $term_id) {
+                if (!term_exists($term_id, $taxonomy)) {
+                    return new WP_Error('invalid_product_term', 'One or more product category/tag ids do not exist.', array('status' => 400));
+                }
+            }
+            $normalized[$field] = $ids;
+        } elseif (in_array($field, array('weight', 'length', 'width', 'height'), true)) {
+            $decimal = wc_format_decimal($value);
+            if ($decimal !== '' && (float) $decimal < 0) {
+                return new WP_Error('invalid_product_measurement', 'Product measurements cannot be negative.', array('status' => 400));
+            }
+            $normalized[$field] = $decimal;
+        } elseif ($field === 'taxStatus') {
+            $tax_status = sanitize_key($value);
+            if (!in_array($tax_status, array('taxable', 'shipping', 'none'), true)) {
+                return new WP_Error('invalid_product_tax_status', 'Invalid product tax status.', array('status' => 400));
+            }
+            $normalized[$field] = $tax_status;
+        } elseif ($field === 'taxClass') {
+            $normalized[$field] = sanitize_title($value);
+        } elseif ($field === 'menuOrder') {
+            $normalized[$field] = (int) $value;
+        } elseif ($field === 'virtual') {
+            $normalized[$field] = (bool) $value;
         }
     }
 
@@ -3130,7 +3398,7 @@ function psa_wc_assistant_prepare_detail_update($item, $default_fields = null) {
     }
 
     if ($variation_id) {
-        foreach (array('shortDescription', 'featured', 'catalogVisibility') as $field) {
+        foreach (array('shortDescription', 'featured', 'catalogVisibility', 'categoryIds', 'tagIds', 'purchaseNote', 'menuOrder') as $field) {
             if (array_key_exists($field, $fields)) {
                 return new WP_Error('unsupported_variation_detail_field', 'This detail field is not supported for variations: ' . $field, array('status' => 400));
             }
@@ -3141,7 +3409,7 @@ function psa_wc_assistant_prepare_detail_update($item, $default_fields = null) {
     foreach ($current_values as $field => $expected) {
         if (array_key_exists($field, $fields)) {
             $actual = psa_wc_assistant_current_detail_value($product, $field);
-            if ((string) $actual !== (string) $expected) {
+            if (!psa_wc_assistant_values_match($actual, $expected)) {
                 return new WP_Error('stale_product_detail', 'Product details changed since this action was drafted.', array('status' => 409));
             }
         }
@@ -3182,23 +3450,45 @@ function psa_wc_assistant_save_prepared_detail_update($prepared) {
             $product->set_featured((bool) $value);
         } elseif ($field === 'catalogVisibility' && method_exists($product, 'set_catalog_visibility')) {
             $product->set_catalog_visibility($value);
+        } elseif ($field === 'categoryIds' && method_exists($product, 'set_category_ids')) {
+            $product->set_category_ids($value);
+        } elseif ($field === 'tagIds' && method_exists($product, 'set_tag_ids')) {
+            $product->set_tag_ids($value);
+        } elseif ($field === 'weight' && method_exists($product, 'set_weight')) {
+            $product->set_weight($value);
+        } elseif ($field === 'length' && method_exists($product, 'set_length')) {
+            $product->set_length($value);
+        } elseif ($field === 'width' && method_exists($product, 'set_width')) {
+            $product->set_width($value);
+        } elseif ($field === 'height' && method_exists($product, 'set_height')) {
+            $product->set_height($value);
+        } elseif ($field === 'taxStatus' && method_exists($product, 'set_tax_status')) {
+            $product->set_tax_status($value);
+        } elseif ($field === 'taxClass' && method_exists($product, 'set_tax_class')) {
+            $product->set_tax_class($value);
+        } elseif ($field === 'purchaseNote' && method_exists($product, 'set_purchase_note')) {
+            $product->set_purchase_note($value);
+        } elseif ($field === 'menuOrder' && method_exists($product, 'set_menu_order')) {
+            $product->set_menu_order($value);
+        } elseif ($field === 'virtual' && method_exists($product, 'set_virtual')) {
+            $product->set_virtual((bool) $value);
         }
     }
     $product->save();
     return $prepared['result'];
 }
 
-function psa_wc_assistant_apply_detail_action($action) {
+function psa_wc_assistant_apply_detail_action($action, $dry_run = false) {
     $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
     $prepared = psa_wc_assistant_prepare_detail_update($payload);
     if (is_wp_error($prepared)) {
         return $prepared;
     }
 
-    return psa_wc_assistant_save_prepared_detail_update($prepared);
+    return $dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_detail_update($prepared);
 }
 
-function psa_wc_assistant_apply_bulk_detail_action($action) {
+function psa_wc_assistant_apply_bulk_detail_action($action, $dry_run = false) {
     $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
     $items = isset($payload['items']) && is_array($payload['items']) ? $payload['items'] : array();
     if (count($items) < 1 || count($items) > 50) {
@@ -3222,13 +3512,13 @@ function psa_wc_assistant_apply_bulk_detail_action($action) {
 
     $results = array();
     foreach ($prepared_updates as $prepared) {
-        $results[] = psa_wc_assistant_save_prepared_detail_update($prepared);
+        $results[] = $dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_detail_update($prepared);
     }
 
     return array('updatedCount' => count($results), 'items' => $results);
 }
 
-function psa_wc_assistant_apply_category_detail_action($action) {
+function psa_wc_assistant_apply_category_detail_action($action, $dry_run = false) {
     $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
     $term = psa_wc_assistant_resolve_product_category($payload);
     if (is_wp_error($term)) {
@@ -3261,7 +3551,7 @@ function psa_wc_assistant_apply_category_detail_action($action) {
 
     $results = array();
     foreach ($prepared_updates as $prepared) {
-        $results[] = psa_wc_assistant_save_prepared_detail_update($prepared);
+        $results[] = $dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_detail_update($prepared);
     }
 
     return array(
@@ -3269,6 +3559,325 @@ function psa_wc_assistant_apply_category_detail_action($action) {
         'category' => psa_wc_assistant_category_data($term),
         'items' => $results,
     );
+}
+
+function psa_wc_assistant_allowed_inventory_fields() {
+    return array('manageStock', 'stockQuantity', 'stockStatus', 'backorders', 'lowStockAmount');
+}
+
+function psa_wc_assistant_current_inventory_value($product, $field) {
+    switch ($field) {
+        case 'manageStock':
+            return (bool) $product->get_manage_stock('edit');
+        case 'stockQuantity':
+            return $product->get_stock_quantity('edit');
+        case 'stockStatus':
+            return $product->get_stock_status('edit');
+        case 'backorders':
+            return $product->get_backorders('edit');
+        case 'lowStockAmount':
+            return method_exists($product, 'get_low_stock_amount') ? $product->get_low_stock_amount('edit') : '';
+        default:
+            return null;
+    }
+}
+
+function psa_wc_assistant_normalize_inventory_fields($fields) {
+    $fields = is_array($fields) ? $fields : array();
+    $allowed = array_fill_keys(psa_wc_assistant_allowed_inventory_fields(), true);
+    $normalized = array();
+
+    foreach ($fields as $field => $value) {
+        if (!isset($allowed[$field])) {
+            return new WP_Error('unsupported_inventory_field', 'Unsupported inventory field: ' . sanitize_key($field), array('status' => 400));
+        }
+
+        if ($field === 'manageStock') {
+            $normalized[$field] = (bool) $value;
+        } elseif ($field === 'stockQuantity') {
+            if (!is_numeric($value) || (int) $value < 0) {
+                return new WP_Error('invalid_stock_quantity', 'Stock quantity must be a non-negative number.', array('status' => 400));
+            }
+            $normalized[$field] = (int) $value;
+        } elseif ($field === 'stockStatus') {
+            $status = sanitize_key($value);
+            if (!in_array($status, array('instock', 'outofstock', 'onbackorder'), true)) {
+                return new WP_Error('invalid_stock_status', 'Invalid stock status.', array('status' => 400));
+            }
+            $normalized[$field] = $status;
+        } elseif ($field === 'backorders') {
+            $backorders = sanitize_key($value);
+            if (!in_array($backorders, array('no', 'notify', 'yes'), true)) {
+                return new WP_Error('invalid_backorders', 'Invalid backorders setting.', array('status' => 400));
+            }
+            $normalized[$field] = $backorders;
+        } elseif ($field === 'lowStockAmount') {
+            if ($value !== '' && $value !== null && (!is_numeric($value) || (float) $value < 0)) {
+                return new WP_Error('invalid_low_stock_amount', 'Low stock amount must be empty or non-negative.', array('status' => 400));
+            }
+            $normalized[$field] = ($value === '' || $value === null) ? '' : (float) $value;
+        }
+    }
+
+    if (count($normalized) === 0) {
+        return new WP_Error('missing_inventory_fields', 'At least one inventory field is required.', array('status' => 400));
+    }
+
+    return $normalized;
+}
+
+function psa_wc_assistant_prepare_inventory_update($item, $default_fields = null) {
+    $item = is_array($item) ? $item : array();
+    $product_id = isset($item['productId']) ? absint($item['productId']) : 0;
+    $variation_id = isset($item['variationId']) ? absint($item['variationId']) : 0;
+    $target_id = $variation_id ? $variation_id : $product_id;
+
+    if (!$product_id || !$target_id) {
+        return new WP_Error('invalid_inventory_action', 'Invalid product inventory action payload.', array('status' => 400));
+    }
+    if (!current_user_can('manage_woocommerce') || !current_user_can('edit_product', $product_id)) {
+        return new WP_Error('inventory_action_forbidden', 'You are not allowed to update this product inventory.', array('status' => 403));
+    }
+
+    $product = wc_get_product($target_id);
+    if (!$product) {
+        return new WP_Error('product_not_found', 'Product or variation not found.', array('status' => 404));
+    }
+    if ($variation_id && (int) $product->get_parent_id() !== (int) $product_id) {
+        return new WP_Error('variation_mismatch', 'Variation does not belong to the supplied product.', array('status' => 400));
+    }
+
+    $fields = array_key_exists('fields', $item) ? $item['fields'] : $default_fields;
+    $fields = psa_wc_assistant_normalize_inventory_fields($fields);
+    if (is_wp_error($fields)) return $fields;
+
+    $will_manage_stock = array_key_exists('manageStock', $fields)
+        ? (bool) $fields['manageStock']
+        : (bool) $product->get_manage_stock('edit');
+    if (array_key_exists('stockQuantity', $fields) && !$will_manage_stock) {
+        return new WP_Error('stock_management_required', 'Set manageStock to true before changing stock quantity.', array('status' => 400));
+    }
+
+    $current_values = isset($item['currentValues']) && is_array($item['currentValues']) ? $item['currentValues'] : array();
+    foreach ($current_values as $field => $expected) {
+        if (array_key_exists($field, $fields)
+            && !psa_wc_assistant_values_match(psa_wc_assistant_current_inventory_value($product, $field), $expected)) {
+            return new WP_Error('stale_product_inventory', 'Product inventory changed since this action was drafted.', array('status' => 409));
+        }
+    }
+
+    $old_values = array();
+    foreach ($fields as $field => $_) {
+        $old_values[$field] = psa_wc_assistant_current_inventory_value($product, $field);
+    }
+
+    return array(
+        'product' => $product,
+        'fields' => $fields,
+        'result' => array(
+            'productId' => $product_id,
+            'variationId' => $variation_id ? $variation_id : null,
+            'targetId' => $target_id,
+            'name' => $product->get_name(),
+            'oldValues' => $old_values,
+            'newValues' => $fields,
+        ),
+    );
+}
+
+function psa_wc_assistant_save_prepared_inventory_update($prepared) {
+    $product = $prepared['product'];
+    foreach ($prepared['fields'] as $field => $value) {
+        if ($field === 'manageStock') {
+            $product->set_manage_stock((bool) $value);
+        } elseif ($field === 'stockQuantity') {
+            $product->set_stock_quantity($value);
+        } elseif ($field === 'stockStatus') {
+            $product->set_stock_status($value);
+        } elseif ($field === 'backorders') {
+            $product->set_backorders($value);
+        } elseif ($field === 'lowStockAmount' && method_exists($product, 'set_low_stock_amount')) {
+            $product->set_low_stock_amount($value);
+        }
+    }
+    $product->save();
+    return $prepared['result'];
+}
+
+function psa_wc_assistant_apply_inventory_action($action, $dry_run = false) {
+    $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
+    $prepared = psa_wc_assistant_prepare_inventory_update($payload);
+    return is_wp_error($prepared) ? $prepared : ($dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_inventory_update($prepared));
+}
+
+function psa_wc_assistant_apply_bulk_inventory_action($action, $dry_run = false) {
+    $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
+    $items = isset($payload['items']) && is_array($payload['items']) ? $payload['items'] : array();
+    if (count($items) < 1 || count($items) > 50) {
+        return new WP_Error('invalid_bulk_inventory_action', 'Bulk inventory actions must contain 1 to 50 products.', array('status' => 400));
+    }
+
+    $prepared_updates = array();
+    $seen = array();
+    foreach ($items as $item) {
+        $prepared = psa_wc_assistant_prepare_inventory_update($item);
+        if (is_wp_error($prepared)) return $prepared;
+        $key = (string) $prepared['result']['targetId'];
+        if (isset($seen[$key])) {
+            return new WP_Error('duplicate_inventory_action_item', 'Bulk inventory action contains a duplicate product.', array('status' => 400));
+        }
+        $seen[$key] = true;
+        $prepared_updates[] = $prepared;
+    }
+
+    $results = array();
+    foreach ($prepared_updates as $prepared) {
+        $results[] = $dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_inventory_update($prepared);
+    }
+    return array('updatedCount' => count($results), 'items' => $results);
+}
+
+function psa_wc_assistant_apply_category_inventory_action($action, $dry_run = false) {
+    $payload = isset($action['payload']) && is_array($action['payload']) ? $action['payload'] : array();
+    $term = psa_wc_assistant_resolve_product_category($payload);
+    if (is_wp_error($term)) return $term;
+
+    $max_items = psa_wc_assistant_limit(isset($payload['maxItems']) ? $payload['maxItems'] : 100, 100, 100);
+    $include_variations = !isset($payload['includeVariations']) || (bool) $payload['includeVariations'];
+    $fields = isset($payload['fields']) ? $payload['fields'] : array();
+    $collection = psa_wc_assistant_collect_category_price_targets($term, $include_variations, $max_items);
+    if ($collection['truncated']) {
+        return new WP_Error('category_inventory_limit_exceeded', 'This category exceeds the allowed bulk inventory limit.', array('status' => 400));
+    }
+
+    $prepared_updates = array();
+    foreach ($collection['products'] as $product) {
+        $prepared = psa_wc_assistant_prepare_inventory_update(array(
+            'productId' => $product->get_parent_id() ? $product->get_parent_id() : $product->get_id(),
+            'variationId' => $product->get_parent_id() ? $product->get_id() : null,
+        ), $fields);
+        if (is_wp_error($prepared)) return $prepared;
+        $prepared_updates[] = $prepared;
+    }
+    if (!count($prepared_updates)) {
+        return new WP_Error('category_has_no_products', 'No supported products were found in this category.', array('status' => 404));
+    }
+
+    $results = array();
+    foreach ($prepared_updates as $prepared) {
+        $results[] = $dry_run ? $prepared['result'] : psa_wc_assistant_save_prepared_inventory_update($prepared);
+    }
+    return array('updatedCount' => count($results), 'category' => psa_wc_assistant_category_data($term), 'items' => $results);
+}
+
+function psa_wc_assistant_write_action_handlers() {
+    return array(
+        'update_woocommerce_product_price' => 'psa_wc_assistant_apply_price_action',
+        'bulk_update_woocommerce_product_prices' => 'psa_wc_assistant_apply_bulk_price_action',
+        'bulk_update_woocommerce_category_product_prices' => 'psa_wc_assistant_apply_category_price_action',
+        'update_woocommerce_product_details' => 'psa_wc_assistant_apply_detail_action',
+        'bulk_update_woocommerce_product_details' => 'psa_wc_assistant_apply_bulk_detail_action',
+        'bulk_update_woocommerce_category_product_details' => 'psa_wc_assistant_apply_category_detail_action',
+        'update_woocommerce_product_inventory' => 'psa_wc_assistant_apply_inventory_action',
+        'bulk_update_woocommerce_product_inventory' => 'psa_wc_assistant_apply_bulk_inventory_action',
+        'bulk_update_woocommerce_category_product_inventory' => 'psa_wc_assistant_apply_category_inventory_action',
+    );
+}
+
+function psa_wc_assistant_execute_write_action($handler, $action) {
+    $transaction_started = false;
+    try {
+        if (function_exists('wc_transaction_query')) {
+            wc_transaction_query('start');
+            $transaction_started = true;
+        }
+
+        $result = call_user_func($handler, $action, false);
+        if (is_wp_error($result)) {
+            if ($transaction_started) wc_transaction_query('rollback');
+            return $result;
+        }
+
+        if ($transaction_started) wc_transaction_query('commit');
+        return $result;
+    } catch (Throwable $error) {
+        if ($transaction_started) wc_transaction_query('rollback');
+        return new WP_Error(
+            'assistant_write_action_failed',
+            $error->getMessage() ? $error->getMessage() : 'WooCommerce product update failed.',
+            array('status' => 500)
+        );
+    }
+}
+
+function psa_wc_assistant_preview_write_action($action) {
+    $handlers = psa_wc_assistant_write_action_handlers();
+    if (!isset($handlers[$action['type']])) {
+        return new WP_Error('unsupported_write_action', 'Unsupported assistant write action.', array('status' => 400));
+    }
+
+    $result = call_user_func($handlers[$action['type']], $action, true);
+    if (is_wp_error($result)) return $result;
+
+    $items = isset($result['items']) && is_array($result['items']) ? $result['items'] : array($result);
+    $definition = psa_wc_assistant_write_action_definition($action['type']);
+    $max_items = $definition && isset($definition['maxBatchSize']) ? (int) $definition['maxBatchSize'] : count($items);
+    if (count($items) > $max_items) {
+        return new WP_Error('write_action_limit_exceeded', 'The action exceeds its configured record limit.', array('status' => 400));
+    }
+
+    return array(
+        'actionType' => $action['type'],
+        'resource' => $definition ? $definition['resource'] : 'product',
+        'scope' => $definition ? $definition['scope'] : 'single',
+        'risk' => $definition ? $definition['risk'] : 'high',
+        'requiresUserReview' => true,
+        'maxBatchSize' => $max_items,
+        'summary' => $definition ? $definition['title'] : 'Review product changes',
+        'affectedCount' => count($items),
+        'truncated' => false,
+        'items' => array_slice(array_map(function ($item) {
+            return array(
+                'id' => isset($item['targetId']) ? $item['targetId'] : (isset($item['productId']) ? $item['productId'] : null),
+                'name' => isset($item['name']) ? $item['name'] : '',
+            );
+        }, $items), 0, 20),
+        'changes' => array_slice($items, 0, 20),
+        'warnings' => array(),
+        'fingerprint' => hash('sha256', wp_json_encode($items)),
+    );
+}
+
+function psa_wc_assistant_transition_draft_action_status($id, $from_statuses, $status, $metadata = array()) {
+    global $wpdb;
+    $table = psa_wc_assistant_table('draft_actions');
+    $from_statuses = array_values(array_filter(array_map('sanitize_key', (array) $from_statuses)));
+    if (!count($from_statuses)) return null;
+
+    $placeholders = implode(', ', array_fill(0, count($from_statuses), '%s'));
+    $sql = "UPDATE {$table} SET status = %s, metadata = %s WHERE id = %d AND status IN ({$placeholders})";
+    $args = array_merge(array(sanitize_key($status), psa_wc_json_encode($metadata), absint($id)), $from_statuses);
+    $prepared_sql = call_user_func_array(array($wpdb, 'prepare'), array_merge(array($sql), $args));
+    $updated = $wpdb->query($prepared_sql);
+    return $updated === 1 ? psa_wc_assistant_get_draft_action($id) : null;
+}
+
+function psa_wc_assistant_rest_preview_draft_action($request) {
+    $action = psa_wc_assistant_get_draft_action(absint($request['id']));
+    if (!$action) {
+        return new WP_Error('draft_action_not_found', 'Draft action not found.', array('status' => 404));
+    }
+    if (!in_array($action['status'], array('draft', 'failed'), true)) {
+        return new WP_Error('invalid_draft_action_status', 'Draft action cannot be previewed from this status.', array('status' => 409));
+    }
+
+    $preview = psa_wc_assistant_preview_write_action($action);
+    if (is_wp_error($preview)) return $preview;
+    return rest_ensure_response(array(
+        'draftAction' => $action,
+        'capability' => psa_wc_assistant_write_action_definition($action['type']),
+        'preview' => $preview,
+    ));
 }
 
 function psa_wc_assistant_rest_apply_draft_action($request) {
@@ -3281,47 +3890,43 @@ function psa_wc_assistant_rest_apply_draft_action($request) {
         return new WP_Error('invalid_draft_action_status', 'Draft action cannot be applied from this status.', array('status' => 409));
     }
 
-    if (!in_array($action['type'], array(
-        'update_woocommerce_product_price',
-        'bulk_update_woocommerce_product_prices',
-        'bulk_update_woocommerce_category_product_prices',
-        'update_woocommerce_product_details',
-        'bulk_update_woocommerce_product_details',
-        'bulk_update_woocommerce_category_product_details',
-    ), true)) {
+    $handlers = psa_wc_assistant_write_action_handlers();
+    if (!isset($handlers[$action['type']])) {
         return new WP_Error('unsupported_write_action', 'Unsupported assistant write action.', array('status' => 400));
     }
 
-    if ($action['type'] === 'bulk_update_woocommerce_category_product_prices') {
-        $result = psa_wc_assistant_apply_category_price_action($action);
-    } elseif ($action['type'] === 'bulk_update_woocommerce_product_prices') {
-        $result = psa_wc_assistant_apply_bulk_price_action($action);
-    } elseif ($action['type'] === 'update_woocommerce_product_details') {
-        $result = psa_wc_assistant_apply_detail_action($action);
-    } elseif ($action['type'] === 'bulk_update_woocommerce_product_details') {
-        $result = psa_wc_assistant_apply_bulk_detail_action($action);
-    } elseif ($action['type'] === 'bulk_update_woocommerce_category_product_details') {
-        $result = psa_wc_assistant_apply_category_detail_action($action);
-    } else {
-        $result = psa_wc_assistant_apply_price_action($action);
+    $preview = psa_wc_assistant_preview_write_action($action);
+    if (is_wp_error($preview)) return $preview;
+
+    $metadata = array_merge($action['metadata'], array(
+        'applyingAt' => psa_wc_assistant_now(),
+        'applyingBy' => get_current_user_id(),
+        'preview' => $preview,
+    ));
+    $claimed = psa_wc_assistant_transition_draft_action_status(
+        $action['id'],
+        array('draft', 'failed'),
+        'applying',
+        $metadata
+    );
+    if (!$claimed) {
+        return new WP_Error('draft_action_already_processing', 'Draft action is already being processed.', array('status' => 409));
     }
+
+    $result = psa_wc_assistant_execute_write_action($handlers[$action['type']], $claimed);
     if (is_wp_error($result)) {
-        $error_data = $result->get_error_data();
-        $error_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-        if ($error_status !== 403) {
-            psa_wc_assistant_update_draft_action_status($action['id'], 'failed', array(
-                'failedAt' => psa_wc_assistant_now(),
-                'error' => $result->get_error_message(),
-            ));
-        }
+        psa_wc_assistant_update_draft_action_status($action['id'], 'failed', array_merge($metadata, array(
+            'failedAt' => psa_wc_assistant_now(),
+            'error' => $result->get_error_message(),
+        )));
         return $result;
     }
 
-    $saved = psa_wc_assistant_update_draft_action_status($action['id'], 'applied', array(
+    $saved = psa_wc_assistant_update_draft_action_status($action['id'], 'applied', array_merge($metadata, array(
         'appliedAt' => psa_wc_assistant_now(),
         'appliedBy' => get_current_user_id(),
         'applyResult' => $result,
-    ));
+    )));
 
     return rest_ensure_response(array('draftAction' => $saved, 'result' => $result));
 }
@@ -3336,10 +3941,14 @@ function psa_wc_assistant_rest_reject_draft_action($request) {
         return new WP_Error('invalid_draft_action_status', 'Draft action cannot be rejected from this status.', array('status' => 409));
     }
 
-    $saved = psa_wc_assistant_update_draft_action_status($action['id'], 'rejected', array(
+    $saved = psa_wc_assistant_transition_draft_action_status($action['id'], array('draft', 'failed'), 'rejected', array_merge($action['metadata'], array(
         'rejectedAt' => psa_wc_assistant_now(),
         'rejectedBy' => get_current_user_id(),
-    ));
+    )));
+
+    if (!$saved) {
+        return new WP_Error('draft_action_already_processing', 'Draft action is already being processed.', array('status' => 409));
+    }
 
     return rest_ensure_response(array('draftAction' => $saved));
 }

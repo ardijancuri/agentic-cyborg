@@ -15,18 +15,25 @@ const defaultLabels = {
   send: 'Send',
   apply: 'Apply',
   applying: 'Applying...',
+  preview: 'Review changes',
+  previewing: 'Preparing preview...',
+  previewRequired: 'Review the affected records before applying',
+  affectedRecords: 'Affected records',
+  warnings: 'Warnings',
   reject: 'Reject',
   rejecting: 'Rejecting...',
   draft: 'Draft',
   applied: 'Applied',
   rejected: 'Rejected',
   failed: 'Failed',
+  applyingStatus: 'Applying',
   applyNotAllowed: 'Only authorized users can apply',
   placeholder: 'Ask about the business...',
   loadContextError: 'Could not load assistant context',
   assistantError: 'Assistant request failed',
   refreshError: 'Could not refresh context',
   applyError: 'Could not apply draft action',
+  previewError: 'Could not preview draft action',
   rejectError: 'Could not reject draft action',
 };
 
@@ -114,12 +121,18 @@ const defaultWriteActionTypes = [
   'update_product_details',
   'bulk_update_product_details',
   'bulk_update_product_details_by_category',
+  'update_product_inventory',
+  'bulk_update_product_inventory',
+  'bulk_update_product_inventory_by_category',
   'update_woocommerce_product_price',
   'bulk_update_woocommerce_product_prices',
   'bulk_update_woocommerce_category_product_prices',
   'update_woocommerce_product_details',
   'bulk_update_woocommerce_product_details',
   'bulk_update_woocommerce_category_product_details',
+  'update_woocommerce_product_inventory',
+  'bulk_update_woocommerce_product_inventory',
+  'bulk_update_woocommerce_category_product_inventory',
 ];
 
 const formatProductTarget = (item = {}) => {
@@ -189,14 +202,23 @@ function DraftActionCard({
   isWriteAction,
   canApplyActions,
   busyState,
+  preview,
+  requirePreviewBeforeApply,
+  onPreview,
   onApply,
   onReject,
 }) {
   const status = action.status || 'draft';
-  const isClosed = status === 'applied' || status === 'rejected';
+  const isClosed = status === 'applied' || status === 'rejected' || status === 'applying';
   const canShowControls = isWriteAction && !isClosed;
   const statusLabel = labels[status] || status;
   const payloadSummary = isWriteAction ? summarizePricePayload(action) : [];
+  const capability = action.metadata?.capability || {};
+  const applyDisabled = !canApplyActions
+    || busyState === 'apply'
+    || busyState === 'reject'
+    || busyState === 'preview'
+    || (requirePreviewBeforeApply && !preview);
 
   return (
     <div className="psa-draft-card">
@@ -206,6 +228,8 @@ function DraftActionCard({
           <p className="psa-draft-reason">{action.reason}</p>
         </div>
         <div className="psa-draft-badges">
+          {capability.scope && <span className="psa-capability-badge">{capability.scope}</span>}
+          {capability.risk && <span className={`psa-risk psa-risk-${capability.risk}`}>{capability.risk}</span>}
           {isWriteAction && <span className={`psa-status psa-status-${status}`}>{statusLabel}</span>}
           <span className="psa-confidence">{Math.round((action.confidence || 0) * 100)}%</span>
         </div>
@@ -217,6 +241,30 @@ function DraftActionCard({
           ))}
         </ul>
       )}
+      {preview && (
+        <div className="psa-action-preview">
+          <div className="psa-preview-summary">{preview.summary}</div>
+          <div className="psa-preview-count">
+            {labels.affectedRecords}: <strong>{preview.affectedCount}</strong>
+            {preview.maxBatchSize ? ` / ${preview.maxBatchSize}` : ''}
+          </div>
+          {preview.changes?.length > 0 && (
+            <ul className="psa-preview-changes">
+              {preview.changes.slice(0, 5).map((change, index) => (
+                <li key={`${change.productId || change.targetId || index}-${index}`}>
+                  {change.name || `Product ${change.productId || change.targetId || index + 1}`}
+                  {change.priceField ? `: ${change.priceField} ${change.oldPrice ?? ''} -> ${change.newPrice ?? 'cleared'}` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
+          {preview.warnings?.length > 0 && (
+            <div className="psa-preview-warnings">
+              <strong>{labels.warnings}:</strong> {preview.warnings.join(' ')}
+            </div>
+          )}
+        </div>
+      )}
       {action.targetRoute && (
         <a className="psa-link" href={action.targetRoute}>
           {labels.open}
@@ -224,12 +272,24 @@ function DraftActionCard({
       )}
       {canShowControls && (
         <div className="psa-draft-actions">
+          {onPreview && (
+            <button
+              type="button"
+              className="psa-action-preview-button"
+              onClick={() => onPreview(action)}
+              disabled={!canApplyActions || Boolean(busyState)}
+            >
+              {busyState === 'preview' ? labels.previewing : labels.preview}
+            </button>
+          )}
           <button
             type="button"
             className="psa-action-apply"
             onClick={() => onApply(action)}
-            disabled={!canApplyActions || busyState === 'apply' || busyState === 'reject'}
-            title={!canApplyActions ? labels.applyNotAllowed : labels.apply}
+            disabled={applyDisabled}
+            title={!canApplyActions
+              ? labels.applyNotAllowed
+              : (requirePreviewBeforeApply && !preview ? labels.previewRequired : labels.apply)}
           >
             {busyState === 'apply' ? labels.applying : labels.apply}
           </button>
@@ -259,7 +319,9 @@ export default function AssistantButton({
   storageKey = 'psa-assistant-session-v1',
   sessionMaxAgeMs = defaultSessionMaxAgeMs,
   onDraftActionApplied,
+  onDraftActionPreviewed,
   onDraftActionRejected,
+  requirePreviewBeforeApply = true,
 }) {
   const labels = mergeLabels(providedLabels);
   const storedSession = persistSession ? readStoredSession(storageKey, sessionMaxAgeMs) : null;
@@ -273,6 +335,7 @@ export default function AssistantButton({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [actionBusy, setActionBusy] = useState({});
+  const [actionPreviews, setActionPreviews] = useState({});
   const [conversationLoaded, setConversationLoaded] = useState(false);
   const endRef = useRef(null);
   const bodyRef = useRef(null);
@@ -384,6 +447,7 @@ export default function AssistantButton({
     setError('');
     setLoading(true);
     setDraftActions([]);
+    setActionPreviews({});
     setMessages((current) => [...current, { role: 'user', content: clean }]);
 
     try {
@@ -462,6 +526,33 @@ export default function AssistantButton({
           metadata: { ...(action.metadata || {}), error: message },
         });
       }
+    } finally {
+      setActionBusy((current) => {
+        const next = { ...current };
+        delete next[action.id];
+        return next;
+      });
+    }
+  };
+
+  const previewDraftAction = async (action) => {
+    if (!api?.previewDraftAction || !action?.id) {
+      return;
+    }
+
+    setError('');
+    setActionBusy((current) => ({ ...current, [action.id]: 'preview' }));
+    try {
+      const data = await api.previewDraftAction(action.id);
+      if (data?.draftAction) {
+        replaceDraftAction(data.draftAction);
+      }
+      if (data?.preview) {
+        setActionPreviews((current) => ({ ...current, [action.id]: data.preview }));
+      }
+      onDraftActionPreviewed?.(data);
+    } catch (requestError) {
+      setError(requestError?.message || labels.previewError);
     } finally {
       setActionBusy((current) => {
         const next = { ...current };
@@ -565,9 +656,12 @@ export default function AssistantButton({
                     key={action.id || action.title}
                     action={action}
                     labels={labels}
-                    isWriteAction={writeActionTypes.includes(action.type)}
+                    isWriteAction={action.metadata?.capability?.mode === 'write' || writeActionTypes.includes(action.type)}
                     canApplyActions={canApplyActions}
                     busyState={actionBusy[action.id]}
+                    preview={actionPreviews[action.id]}
+                    requirePreviewBeforeApply={requirePreviewBeforeApply && Boolean(api?.previewDraftAction)}
+                    onPreview={api?.previewDraftAction ? previewDraftAction : null}
                     onApply={applyDraftAction}
                     onReject={rejectDraftAction}
                   />

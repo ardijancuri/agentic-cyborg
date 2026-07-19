@@ -8,11 +8,22 @@ import { resolveDraftActionRoute } from '../src/core/pageRegistry.js';
 import { refreshAssistantContext, createStaticContextSource } from '../src/context/contextRefresh.js';
 import { AssistantService } from '../src/core/AssistantService.js';
 import { createWriteActionRegistry } from '../src/core/writeActionRegistry.js';
+import { createAssistantCapabilityHarness } from '../src/core/capabilityHarness.js';
+import {
+  calculateProductPrice,
+  createActionPreviewFingerprint,
+  normalizeBulkLimit,
+  normalizePriceMutation,
+} from '../src/products/productMutations.js';
 import { OpenAIResponsesProvider } from '../src/providers/OpenAIResponsesProvider.js';
 import { createReadOnlyToolRegistry, clampToolLimit } from '../src/adapters/readOnlyToolRegistry.js';
 import { createAssistantRoleAuthorize } from '../src/integrations/express/roleAccess.js';
 import { createRemoteWooCommerceToolRegistry } from '../src/integrations/woocommerce/remoteToolRegistry.js';
 import { WooCommerceAssistantRunner } from '../src/integrations/woocommerce/WooCommerceAssistantRunner.js';
+import {
+  filterWooCommerceToolDefinitions,
+  filterWooCommerceWriteActions,
+} from '../src/integrations/woocommerce/capabilities.js';
 import {
   createWooCommerceAssistantSignature,
   verifyWooCommerceAssistantSignature,
@@ -77,6 +88,32 @@ test('config defaults to low-cost model', () => {
   });
 
   assert.equal(config.model, 'gpt-5.4-mini');
+  assert.equal(config.maxBulkItems, 100);
+  assert.equal(config.actionPreviewLimit, 20);
+});
+
+test('product price mutations support reviewed set, percentage, fixed, and clear operations', () => {
+  const decrease = normalizePriceMutation({
+    priceField: 'price',
+    operation: 'decrease_percent',
+    percent: 10,
+  });
+  assert.equal(calculateProductPrice({ currentPrice: 100, regularPrice: 100, mutation: decrease }), 90);
+
+  const increase = normalizePriceMutation({
+    priceField: 'price',
+    operation: 'increase_fixed',
+    amount: 12.5,
+  });
+  assert.equal(calculateProductPrice({ currentPrice: 100, regularPrice: 100, mutation: increase }), 112.5);
+
+  const clear = normalizePriceMutation({ priceField: 'sale_price', operation: 'clear' });
+  assert.equal(calculateProductPrice({ currentPrice: 80, regularPrice: 100, mutation: clear }), null);
+  assert.equal(normalizeBulkLimit(1000, 50, 100), 100);
+  assert.equal(
+    createActionPreviewFingerprint([{ id: 1, value: 2 }]),
+    createActionPreviewFingerprint([{ value: 2, id: 1 }])
+  );
 });
 
 test('missing API key message is explicit', () => {
@@ -141,8 +178,9 @@ test('system prompt includes host app and tool names', () => {
   assert.match(prompt, /2-5 concise/);
   assert.match(prompt, /Registered pages/);
   assert.match(prompt, /\/reports/);
-  assert.match(prompt, /do not require every product id/i);
-  assert.match(prompt, /instead of asking for product ids/i);
+  assert.match(prompt, /server generates a fresh preview/i);
+  assert.match(prompt, /instead of asking the user to manually list product ids/i);
+  assert.match(prompt, /Never guess a product id/i);
   assert.match(prompt, /include up to two compact charts/i);
 });
 
@@ -393,6 +431,26 @@ test('read-only tool registry exposes only named tools and passes context', asyn
   );
 });
 
+test('read-only tool capabilities enforce configured roles', async () => {
+  const registry = createReadOnlyToolRegistry({
+    tools: [{
+      name: 'get_sensitive_margin',
+      description: 'Read margin data',
+      resource: 'finance',
+      requiredRoles: ['full_admin'],
+      handler: async () => ({ margin: 42 }),
+    }],
+  });
+
+  assert.equal(registry.listCapabilities()[0].resource, 'finance');
+  await assert.rejects(
+    () => registry.execute('get_sensitive_margin', {}, { user: { role: 'admin' } }),
+    /not authorized/
+  );
+  const result = await registry.execute('get_sensitive_margin', {}, { user: { role: 'full_admin' } });
+  assert.equal(result.data.margin, 42);
+});
+
 test('assistant role authorize defaults to admin and full_admin', () => {
   const authorize = createAssistantRoleAuthorize();
   let nextCalled = false;
@@ -541,6 +599,68 @@ test('write action registry blocks non-authorized users', async () => {
   );
 });
 
+test('write action registry apply remains usable when detached from the registry object', async () => {
+  const registry = createWriteActionRegistry({
+    actions: [
+      {
+        type: 'update_product_price',
+        requiredRoles: ['full_admin'],
+        apply: async ({ payload }) => ({ updated: payload.productId }),
+      },
+    ],
+  });
+  const { apply } = registry;
+
+  const result = await apply(
+    { type: 'update_product_price', payload: { productId: 'product-1' } },
+    { user: { role: 'full_admin' } }
+  );
+
+  assert.deepEqual(result, { updated: 'product-1' });
+});
+
+test('capability harness exposes bounded reviewed previews and decorated actions', async () => {
+  const toolRegistry = createReadOnlyToolRegistry({
+    tools: [{ name: 'find_products', handler: async () => ({ products: [] }) }],
+  });
+  const writeActionRegistry = createWriteActionRegistry({
+    actions: [{
+      type: 'bulk_update_product_inventory',
+      title: 'Update inventory',
+      resource: 'inventory',
+      scope: 'selection',
+      risk: 'high',
+      maxBatchSize: 2,
+      requiredRoles: ['full_admin'],
+      preview: async ({ action }) => ({
+        summary: 'Two inventory rows will change',
+        affectedCount: action.payload.items.length,
+        changes: action.payload.items,
+      }),
+      apply: async ({ preview }) => ({ updatedCount: preview.affectedCount }),
+    }],
+  });
+  const harness = createAssistantCapabilityHarness({ toolRegistry, writeActionRegistry });
+  const action = {
+    id: 'action-1',
+    type: 'bulk_update_product_inventory',
+    payload: { items: [{ productId: '1' }, { productId: '2' }] },
+  };
+
+  assert.equal(harness.listCapabilities().read[0].name, 'find_products');
+  assert.equal(harness.listCapabilities().write[0].maxBatchSize, 2);
+  assert.equal(harness.decorateDraftAction(action).metadata.capability.mode, 'write');
+  const preview = await harness.previewWriteAction(action, { user: { role: 'full_admin' } });
+  assert.equal(preview.affectedCount, 2);
+  const execution = await harness.executeWriteAction(action, { user: { role: 'full_admin' } });
+  assert.equal(execution.result.updatedCount, 2);
+
+  await assert.rejects(
+    () => harness.previewWriteAction({ ...action, payload: { items: [{}, {}, {}] } }, { user: { role: 'full_admin' } }),
+    /above the 2 record limit/
+  );
+});
+
 test('assistant service applies write action and updates status', async () => {
   const action = {
     id: 'action-1',
@@ -589,6 +709,63 @@ test('assistant service applies write action and updates status', async () => {
   assert.equal(result.draftAction.status, 'applied');
   assert.equal(statuses[0].status, 'applied');
   assert.equal(statuses[0].metadata.applyResult.updated, 'item-1');
+});
+
+test('assistant service previews and atomically claims reviewed write actions', async () => {
+  const action = {
+    id: 'action-2',
+    conversation_id: 'conversation-1',
+    type: 'update_product_inventory',
+    title: 'Update inventory',
+    reason: 'Owner requested it',
+    target_route: '/inventory',
+    payload: { productId: 'product-1', fields: { quantity: 8 } },
+    confidence: 0.9,
+    requires_user_review: true,
+    status: 'draft',
+    metadata: {},
+  };
+  const transitions = [];
+  const updates = [];
+  const registry = createWriteActionRegistry({
+    actions: [{
+      type: 'update_product_inventory',
+      resource: 'inventory',
+      requiredRoles: ['full_admin'],
+      preview: async () => ({
+        summary: 'One inventory row will change',
+        affectedCount: 1,
+        changes: [{ productId: 'product-1', oldValues: { quantity: 5 }, newValues: { quantity: 8 } }],
+      }),
+      apply: async () => ({ updatedCount: 1 }),
+    }],
+  });
+  const service = new AssistantService({
+    repository: {
+      async getDraftActionForUser() { return action; },
+      async transitionDraftActionStatus(update) {
+        transitions.push(update);
+        return { ...action, status: update.status, metadata: update.metadata };
+      },
+      async updateDraftActionStatus(update) {
+        updates.push(update);
+        return { ...action, status: update.status, metadata: update.metadata };
+      },
+    },
+    config: readAssistantConfig({ ASSISTANT_PROVIDER: 'openai' }),
+    toolRegistry: createReadOnlyToolRegistry({ tools: [] }),
+    writeActionRegistry: registry,
+  });
+  const user = { id: 'user-1', role: 'full_admin' };
+
+  const preview = await service.previewDraftAction({ actionId: action.id, user });
+  assert.equal(preview.preview.affectedCount, 1);
+  assert.equal(preview.capability.resource, 'inventory');
+
+  const applied = await service.applyDraftAction({ actionId: action.id, user });
+  assert.equal(transitions[0].status, 'applying');
+  assert.equal(updates[0].status, 'applied');
+  assert.equal(applied.draftAction.metadata.preview.affectedCount, 1);
 });
 
 test('assistant service rejects draft action and updates status', async () => {
@@ -772,6 +949,23 @@ test('remote woocommerce tool registry signs approved tool callbacks', async () 
   );
 });
 
+test('woocommerce capability filters reject site-supplied unknown tools and writes', () => {
+  const tools = filterWooCommerceToolDefinitions([
+    { type: 'function', name: 'find_products', parameters: { type: 'object' } },
+    { type: 'function', name: 'run_sql', parameters: { type: 'object' } },
+  ]);
+  const writes = filterWooCommerceWriteActions([
+    { type: 'bulk_update_woocommerce_category_product_inventory', maxBatchSize: 999 },
+    { type: 'delete_all_products' },
+  ]);
+
+  assert.deepEqual(tools.map((tool) => tool.name), ['find_products']);
+  assert.deepEqual(writes.map((action) => action.type), ['bulk_update_woocommerce_category_product_inventory']);
+  assert.equal(writes[0].maxBatchSize, 100);
+  assert.equal(writes[0].requiresReview, true);
+  assert.equal(writes[0].resource, 'inventory');
+});
+
 test('woocommerce runner returns controlled unavailable response without api key', async () => {
   const runner = new WooCommerceAssistantRunner({
     config: readAssistantConfig({ ASSISTANT_ENABLED: 'true', ASSISTANT_PROVIDER: 'openai' }),
@@ -796,6 +990,8 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
       assert.equal(input.writeActions[0].type, 'update_woocommerce_product_price');
       assert.equal(input.writeActions[1].type, 'bulk_update_woocommerce_product_prices');
       assert.equal(input.writeActions[2].type, 'bulk_update_woocommerce_category_product_prices');
+      assert.equal(input.writeActions[3].type, 'bulk_update_woocommerce_category_product_inventory');
+      assert.equal(this.toolRegistry.hasTool('run_sql'), false);
       assert.equal(input.pageRegistry[0].route, '/wp-admin/edit.php?post_type=product');
       assert.equal(input.extraInstructions.some((instruction) => /do not ask for individual product ids/i.test(instruction)), true);
       return {
@@ -843,6 +1039,12 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
         description: 'Find products by category',
         parameters: { type: 'object', properties: {}, additionalProperties: false },
       },
+      {
+        type: 'function',
+        name: 'run_sql',
+        description: 'Must be rejected',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      },
     ],
     callback: {
       toolsRunUrl: 'https://store.example/wp-json/oninova-assistant/v1/tools/run',
@@ -852,6 +1054,8 @@ test('woocommerce runner passes remote tools and write actions to provider', asy
       { type: 'update_woocommerce_product_price' },
       { type: 'bulk_update_woocommerce_product_prices' },
       { type: 'bulk_update_woocommerce_category_product_prices' },
+      { type: 'bulk_update_woocommerce_category_product_inventory', maxBatchSize: 999 },
+      { type: 'delete_all_products' },
     ],
     pageRegistry: [{ id: 'products', route: '/wp-admin/edit.php?post_type=product' }],
   });

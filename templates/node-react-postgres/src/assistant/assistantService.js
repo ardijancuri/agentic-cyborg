@@ -1,5 +1,6 @@
 import {
   createAssistantService,
+  createAssistantCapabilityHarness,
   createPostgresAssistantRepository,
   readAssistantConfig,
 } from '@oninova/personal-software-assistant';
@@ -13,19 +14,29 @@ export const createProjectAssistantService = ({
   pool,
   appName = 'Project Name',
   auditLogger = createProjectAuditLogger(),
+  writeRoles = ['full_admin'],
 } = {}) => {
   if (!pool?.query) {
     throw new Error('createProjectAssistantService requires a PostgreSQL pool/client');
   }
 
+  const config = readAssistantConfig(process.env);
+  const toolRegistry = createProjectToolRegistry({ pool });
+  const writeActionRegistry = createProjectWriteActionRegistry({
+    pool,
+    maxBulkItems: config.maxBulkItems,
+    requiredRoles: writeRoles,
+  });
+
   return createAssistantService({
     repository: createPostgresAssistantRepository({ pool }),
-    toolRegistry: createProjectToolRegistry({ pool }),
+    toolRegistry,
     contextSources: createProjectContextSources(),
     pageRegistry: createProjectPageRegistry(),
-    writeActionRegistry: createProjectWriteActionRegistry({ pool }),
+    writeActionRegistry,
+    capabilityHarness: createAssistantCapabilityHarness({ toolRegistry, writeActionRegistry }),
     fallbackRoute: '/dashboard',
-    config: readAssistantConfig(process.env),
+    config,
     appName,
     auditLogger,
   });

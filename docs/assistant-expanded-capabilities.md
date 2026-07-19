@@ -19,7 +19,9 @@ This update expands `personal-software-assistant` for WooCommerce and Node/React
 - Added read-only tools for product categories, products by category, order statistics, product performance, product comparisons, category comparisons, customer order preferences, and marketing recommendations.
 - Added approved write actions for single product prices, itemized bulk prices, category bulk prices, single product details, itemized bulk details, and category bulk details.
 - Product price writes use WooCommerce CRUD APIs for simple products and variations.
-- Product detail writes are limited to approved fields: `name`, `sku`, `shortDescription`, `description`, `status`, `featured`, and `catalogVisibility`.
+- Product detail writes now include approved catalog, taxonomy, measurement, tax, menu-order, and virtual fields.
+- Inventory writes support `manageStock`, `stockQuantity`, `stockStatus`, `backorders`, and `lowStockAmount`.
+- Every action supports a read-only server preview and an atomic `applying` claim before execution.
 - Context refresh now includes customer preference and marketing recommendation snapshots.
 - The WordPress admin drawer restores the active conversation after page refresh using local storage plus WordPress conversation history.
 
@@ -42,7 +44,7 @@ This update expands `personal-software-assistant` for WooCommerce and Node/React
 
 - All write actions remain draft-only until an authorized user clicks Apply.
 - The model never writes directly to product, order, stock, customer, coupon, or payment tables.
-- WooCommerce V1 still does not support stock writes, order status changes, customer edits, coupon edits, or sale schedules.
+- WooCommerce product inventory writes are supported; order status changes, customer edits, coupon edits, product deletion, and sale schedules remain unavailable.
 - Batch writes are bounded: 50 itemized products and 100 category-resolved products by default.
 
 ## Verification
